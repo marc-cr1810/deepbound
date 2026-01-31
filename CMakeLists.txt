@@ -55,6 +55,27 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(FastNoise2)
 
+# ImGui
+FetchContent_Declare(
+  imgui
+  GIT_REPOSITORY https://github.com/ocornut/imgui.git
+  GIT_TAG docking
+)
+FetchContent_MakeAvailable(imgui)
+
+# Create ImGui Library
+add_library(imgui STATIC
+    ${imgui_SOURCE_DIR}/imgui.cpp
+    ${imgui_SOURCE_DIR}/imgui_draw.cpp
+    ${imgui_SOURCE_DIR}/imgui_tables.cpp
+    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+    ${imgui_SOURCE_DIR}/imgui_demo.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
+)
+target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR})
+target_link_libraries(imgui PUBLIC glfw glad) # backends need glfw and glad/gl
+
 # Core Library
 add_library(deepbound_core STATIC)
 target_include_directories(deepbound_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -77,7 +98,7 @@ file(GLOB_RECURSE CORE_SOURCES src/core/*.cpp src/core/*.hpp)
 
 target_sources(deepbound_core PRIVATE ${CORE_SOURCES})
 
-target_link_libraries(deepbound_core PUBLIC glfw nlohmann_json::nlohmann_json glad glm::glm FastNoise2)
+target_link_libraries(deepbound_core PUBLIC glfw nlohmann_json::nlohmann_json glad glm::glm FastNoise2 imgui)
 target_compile_definitions(deepbound_core PUBLIC GLFW_INCLUDE_NONE)
 target_include_directories(deepbound_core PUBLIC ${stb_SOURCE_DIR})
 

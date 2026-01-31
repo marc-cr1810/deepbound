@@ -9,10 +9,10 @@ struct GLFWwindow;
 namespace deepbound
 {
 
-class Window
+class window_t
 {
 public:
-  struct Properties
+  struct properties_t
   {
     std::string title;
     int width;
@@ -21,8 +21,8 @@ public:
     std::function<void(double, double)> scroll_callback;
   };
 
-  Window(const Properties &props);
-  ~Window();
+  window_t(const properties_t &props);
+  ~window_t();
 
   auto should_close() const -> bool;
   auto update() -> void;
@@ -52,11 +52,11 @@ public:
   }
 
 private:
-  auto init(const Properties &props) -> void;
+  auto init(const properties_t &props) -> void;
   auto shutdown() -> void;
 
   GLFWwindow *m_window{nullptr};
-  Properties m_data;
+  properties_t m_data;
 };
 
 } // namespace deepbound

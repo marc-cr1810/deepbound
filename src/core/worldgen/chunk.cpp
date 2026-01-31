@@ -3,7 +3,7 @@
 namespace deepbound
 {
 
-Chunk::Chunk(int x, int y) : m_x(x), m_y(y)
+chunk_t::chunk_t(int x, int y) : m_x(x), m_y(y)
 {
   // Initialize with "air" or empty
   resource_id_t air("deepbound", "air");
@@ -13,7 +13,7 @@ Chunk::Chunk(int x, int y) : m_x(x), m_y(y)
   }
 }
 
-auto Chunk::set_tile(int local_x, int local_y, const resource_id_t &tile_id) -> void
+auto chunk_t::set_tile(int local_x, int local_y, const resource_id_t &tile_id) -> void
 {
   if (local_x >= 0 && local_x < CHUNK_SIZE && local_y >= 0 && local_y < CHUNK_SIZE)
   {
@@ -22,7 +22,7 @@ auto Chunk::set_tile(int local_x, int local_y, const resource_id_t &tile_id) -> 
   }
 }
 
-auto Chunk::get_tile(int local_x, int local_y) const -> const resource_id_t &
+auto chunk_t::get_tile(int local_x, int local_y) const -> const resource_id_t &
 {
   if (local_x >= 0 && local_x < CHUNK_SIZE && local_y >= 0 && local_y < CHUNK_SIZE)
   {

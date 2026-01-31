@@ -17,7 +17,7 @@ class world_generator_t
 public:
   world_generator_t();
 
-  auto generate_chunk(int chunk_x, int chunk_y) -> std::unique_ptr<Chunk>;
+  auto generate_chunk(int chunk_x, int chunk_y) -> std::unique_ptr<chunk_t>;
 
 private:
   auto init_context() -> void;

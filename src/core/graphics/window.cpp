@@ -13,17 +13,17 @@ static void glfw_error_callback(int error, const char *description)
   std::cerr << "GLFW Error (" << error << "): " << description << std::endl;
 }
 
-Window::Window(const Properties &props)
+window_t::window_t(const properties_t &props)
 {
   init(props);
 }
 
-Window::~Window()
+window_t::~window_t()
 {
   shutdown();
 }
 
-auto Window::init(const Properties &props) -> void
+auto window_t::init(const properties_t &props) -> void
 {
   m_data = props;
 
@@ -69,7 +69,7 @@ auto Window::init(const Properties &props) -> void
                                  [](GLFWwindow *window, int width, int height)
                                  {
                                    glViewport(0, 0, width, height);
-                                   Window::Properties *props = (Window::Properties *)glfwGetWindowUserPointer(window);
+                                   window_t::properties_t *props = (window_t::properties_t *)glfwGetWindowUserPointer(window);
                                    if (props)
                                    {
                                      props->width = width;
@@ -81,7 +81,7 @@ auto Window::init(const Properties &props) -> void
   glfwSetScrollCallback(m_window,
                         [](GLFWwindow *window, double xoffset, double yoffset)
                         {
-                          Window::Properties *props = (Window::Properties *)glfwGetWindowUserPointer(window);
+                          window_t::properties_t *props = (window_t::properties_t *)glfwGetWindowUserPointer(window);
                           if (props && props->scroll_callback)
                           {
                             props->scroll_callback(xoffset, yoffset);
@@ -94,7 +94,7 @@ auto Window::init(const Properties &props) -> void
     glfwSwapInterval(0);
 }
 
-auto Window::shutdown() -> void
+auto window_t::shutdown() -> void
 {
   if (m_window)
   {
@@ -102,22 +102,22 @@ auto Window::shutdown() -> void
   }
 }
 
-auto Window::should_close() const -> bool
+auto window_t::should_close() const -> bool
 {
   return glfwWindowShouldClose(m_window);
 }
 
-auto Window::update() -> void
+auto window_t::update() -> void
 {
   glfwPollEvents();
 }
 
-auto Window::swap_buffers() -> void
+auto window_t::swap_buffers() -> void
 {
   glfwSwapBuffers(m_window);
 }
 
-auto Window::is_key_pressed(int key_code) const -> bool
+auto window_t::is_key_pressed(int key_code) const -> bool
 {
   auto state = glfwGetKey(m_window, key_code);
   return state == GLFW_PRESS || state == GLFW_REPEAT;

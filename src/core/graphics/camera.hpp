@@ -6,10 +6,10 @@
 namespace deepbound
 {
 
-class Camera2D
+class camera_2d_t
 {
 public:
-  Camera2D() = default;
+  camera_2d_t() = default;
 
   auto set_position(const glm::vec2 &pos) -> void
   {

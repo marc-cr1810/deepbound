@@ -41,10 +41,10 @@ void main() {
 }
 )";
 
-ChunkRenderer::ChunkRenderer()
+chunk_renderer_t::chunk_renderer_t()
 {
   // Setup Shader
-  m_shader = std::make_unique<Shader>(vertex_shader_src, fragment_shader_src);
+  m_shader = std::make_unique<shader_t>(vertex_shader_src, fragment_shader_src);
 
   // Setup Geometry placeholders
   glGenVertexArrays(1, &m_vao);
@@ -60,13 +60,13 @@ ChunkRenderer::ChunkRenderer()
   glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *)(2 * sizeof(float)));
 }
 
-ChunkRenderer::~ChunkRenderer()
+chunk_renderer_t::~chunk_renderer_t()
 {
   glDeleteVertexArrays(1, &m_vao);
   glDeleteBuffers(1, &m_vbo);
 }
 
-auto ChunkRenderer::render(const Chunk &chunk, const Camera2D &camera, float aspect_ratio) -> void
+auto chunk_renderer_t::render(const chunk_t &chunk, const camera_2d_t &camera, float aspect_ratio) -> void
 {
   m_shader->bind();
 

@@ -10,10 +10,10 @@ namespace deepbound
 
 constexpr int CHUNK_SIZE = 32;
 
-class Chunk
+class chunk_t
 {
 public:
-  Chunk(int x, int y);
+  chunk_t(int x, int y);
 
   auto get_x() const -> int
   {

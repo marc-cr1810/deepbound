@@ -19,7 +19,7 @@ auto world_generator_t::init_context() -> void
   if (m_initialized)
     return;
 
-  std::string assets_path = "c:/Programming/C++/deepbound/assets/worldgen";
+  std::string assets_path = "assets/worldgen";
   json_loader_t::load_worldgen(assets_path, m_context);
 
   std::cout << "WorldGen Initialized. Loaded " << m_context.landforms.size() << " landforms, " << m_context.rock_strata.size() << " strata, " << m_context.geologic_provinces.size() << " provinces." << std::endl;
@@ -113,9 +113,9 @@ auto world_generator_t::get_rock_strata(float x, float y, float density, const g
   return "deepbound:rock-granite";
 }
 
-auto world_generator_t::generate_chunk(int chunk_x, int chunk_y) -> std::unique_ptr<Chunk>
+auto world_generator_t::generate_chunk(int chunk_x, int chunk_y) -> std::unique_ptr<chunk_t>
 {
-  auto chunk = std::make_unique<Chunk>(chunk_x, chunk_y);
+  auto chunk = std::make_unique<chunk_t>(chunk_x, chunk_y);
 
   int world_x_base = chunk_x * CHUNK_SIZE;
   int world_y_base = chunk_y * CHUNK_SIZE;
@@ -131,6 +131,17 @@ auto world_generator_t::generate_chunk(int chunk_x, int chunk_y) -> std::unique_
     float rain = (m_rain_noise.get_noise(sample_x * 0.0001f, 0) + 1.0f) * 128.0f;
 
     const landform_variant_t *current_lf = get_landform(sample_x, 0, temp, rain);
+
+    // Safety check for null landform
+    if (!current_lf)
+    {
+      // Fallback or skip
+      // For now, if we have NO landforms, we can't do much.
+      // Assume a default or return early to avoid crash.
+      // However, we need to fill the chunk with SOMETHING.
+      // Let's just create a dummy/default if logic allows, or just skip advanced logic.
+    }
+
     const geologic_province_variant_t *current_province = get_province(sample_x, 0);
 
     // 2. Optimized Surface Search
@@ -144,14 +155,25 @@ auto world_generator_t::generate_chunk(int chunk_x, int chunk_y) -> std::unique_
     }
     else
     {
-      float h_noise = m_noise.get_terrain_noise((float)wx, 0, current_lf->terrain_octaves);
+      float h_noise = 0.0f;
+      float y_offset = 0.5f;
+
+      if (current_lf)
+      {
+        h_noise = m_noise.get_terrain_noise((float)wx, 0, current_lf->terrain_octaves);
+      }
+
       float upheaval = m_noise.get_noise((float)wx * 0.0005f, 555) * 0.1f;
 
       int start_y = std::min(m_world_height - 1, std::max(0, prev_surface_y + 32));
       for (int sy = start_y; sy >= 0; --sy)
       {
         float normalized_y = (float)sy / (float)m_world_height;
-        float y_offset = current_lf->y_key_thresholds.evaluate(normalized_y);
+        if (current_lf)
+        {
+          y_offset = current_lf->y_key_thresholds.evaluate(normalized_y);
+        }
+
         if ((y_offset - 0.5f) * 6.0f + h_noise + upheaval > 0.0f)
         {
           surface_y = sy;
@@ -215,7 +237,9 @@ auto world_generator_t::generate_chunk(int chunk_x, int chunk_y) -> std::unique_
     }
 
     // 4. Column block filling
-    float h_noise = m_noise.get_terrain_noise((float)wx, 0, current_lf->terrain_octaves);
+    float h_noise = 0.0f;
+    if (current_lf)
+      h_noise = m_noise.get_terrain_noise((float)wx, 0, current_lf->terrain_octaves);
     float upheaval = m_noise.get_noise((float)wx * 0.0005f, 555) * 0.1f;
 
     for (int y = 0; y < CHUNK_SIZE; ++y)

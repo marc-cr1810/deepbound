@@ -9,11 +9,11 @@
 namespace deepbound
 {
 
-class Shader
+class shader_t
 {
 public:
-  Shader(const std::string &vertex_src, const std::string &fragment_src);
-  ~Shader();
+  shader_t(const std::string &vertex_src, const std::string &fragment_src);
+  ~shader_t();
 
   auto bind() const -> void;
   auto unbind() const -> void;
