@@ -32,7 +32,11 @@ public:
   auto get_cellular(float x, float y, float frequency = 0.01f) const -> float;
 
   // Get custom weighted terrain noise with thresholds
+  // Get custom weighted terrain noise with thresholds (2D)
   auto get_terrain_noise(float x, float y, const std::vector<double> &amplitudes, const std::vector<double> &thresholds = {}) const -> float;
+
+  // Get custom weighted terrain noise with thresholds (3D)
+  auto get_terrain_noise_3d(float x, float y, float z, const std::vector<double> &amplitudes, const std::vector<double> &thresholds = {}) const -> float;
 
   // New: Get custom noise with explicit frequencies (for rock strata)
   auto get_custom_noise(float x, float y, const std::vector<float> &amplitudes, const std::vector<float> &thresholds = {}, const std::vector<float> &frequencies = {}) const -> float;

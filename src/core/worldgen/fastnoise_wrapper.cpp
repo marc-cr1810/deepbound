@@ -79,6 +79,31 @@ auto fast_noise_wrapper_t::get_terrain_noise(float x, float y, const std::vector
   return (total_amp > 0.0f) ? (total_noise / total_amp) : 0.0f;
 }
 
+auto fast_noise_wrapper_t::get_terrain_noise_3d(float x, float y, float z, const std::vector<double> &amplitudes, const std::vector<double> &thresholds) const -> float
+{
+  float total_noise = 0.0f;
+  float total_amp = 0.0f;
+  float freq = 0.001f; // Matching 2D freq
+
+  for (size_t i = 0; i < amplitudes.size(); ++i)
+  {
+    float amp = (float)amplitudes[i];
+    float th = (i < thresholds.size()) ? (float)thresholds[i] : 0.0f;
+
+    if (amp != 0.0f)
+    {
+      // Using X, Y, Z for 3D noise
+      float val = m_simplex_base->GenSingle3D(x * freq, y * freq, z * freq, m_seed + (int)i * 1000);
+      total_noise += (val - th) * amp;
+      total_amp += std::abs(amp);
+    }
+
+    freq *= 1.6f;
+  }
+
+  return (total_amp > 0.0f) ? (total_noise / total_amp) : 0.0f;
+}
+
 auto fast_noise_wrapper_t::get_custom_noise(float x, float y, const std::vector<float> &amplitudes, const std::vector<float> &thresholds, const std::vector<float> &frequencies) const -> float
 {
   float total_noise = 0.0f;

@@ -21,8 +21,10 @@ struct landform_weight_t
 struct column_data_t
 {
   std::vector<landform_weight_t> weights;
-  float surface_noise;
-  float upheaval;
+  float surface_noise = 0.0f;
+  float upheaval = 0.0f;
+  std::vector<double> blended_octaves;
+  std::vector<double> blended_thresholds;
 };
 
 class world_generator_t

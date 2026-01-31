@@ -206,33 +206,31 @@ auto world_generator_t::prepare_column_data(float x, float z) -> column_data_t
   column_data_t data;
   get_landform_weights(x, z, data.weights);
 
-  static std::vector<double> blended_octaves;
-  static std::vector<double> blended_thresholds;
-
   if (!data.weights.empty())
   {
     size_t oct_size = data.weights[0].landform->terrain_octaves.size();
     size_t th_size = data.weights[0].landform->terrain_octave_thresholds.size();
 
-    blended_octaves.assign(oct_size, 0.0);
-    blended_thresholds.assign(th_size, 0.0);
+    data.blended_octaves.assign(oct_size, 0.0);
+    data.blended_thresholds.assign(th_size, 0.0);
 
     for (const auto &w : data.weights)
     {
-      for (size_t i = 0; i < std::min(blended_octaves.size(), w.landform->terrain_octaves.size()); ++i)
+      for (size_t i = 0; i < std::min(data.blended_octaves.size(), w.landform->terrain_octaves.size()); ++i)
       {
-        blended_octaves[i] += w.landform->terrain_octaves[i] * w.weight;
+        data.blended_octaves[i] += w.landform->terrain_octaves[i] * w.weight;
       }
       // If the landform has thresholds, blend them. Otherwise assume 0.
       if (!w.landform->terrain_octave_thresholds.empty())
       {
-        for (size_t i = 0; i < std::min(blended_thresholds.size(), w.landform->terrain_octave_thresholds.size()); ++i)
+        for (size_t i = 0; i < std::min(data.blended_thresholds.size(), w.landform->terrain_octave_thresholds.size()); ++i)
         {
-          blended_thresholds[i] += w.landform->terrain_octave_thresholds[i] * w.weight;
+          data.blended_thresholds[i] += w.landform->terrain_octave_thresholds[i] * w.weight;
         }
       }
     }
-    data.surface_noise = m_noise.get_terrain_noise(x, z, blended_octaves, blended_thresholds);
+    // surface_noise is no longer calculated here as it is now part of the density function
+    data.surface_noise = 0.0f;
   }
   else
   {
@@ -252,11 +250,17 @@ auto world_generator_t::get_density_from_column(float x, float y, const column_d
     blended_y_offset += w.landform->y_key_thresholds.evaluate(normalized_y) * w.weight;
   }
 
-  float base_density = (blended_y_offset - 0.5f) * 6.0f + data.surface_noise + data.upheaval;
-  // Detail noise still needs to be evaluated per block as it varies with Y
-  float detail_noise = m_noise.get_terrain_noise(x, y * 0.25f, {0, 0, 0.05, 0.05, 0.02});
+  float base_density = (blended_y_offset - 0.5f) * 6.0f + data.upheaval;
 
-  return base_density + detail_noise;
+  // Use the blended landform noise configuration for the detailed density noise
+  // This allows the noise character to change based on the landform (smooth vs jagged)
+  float density_noise = 0.0f;
+  if (!data.blended_octaves.empty())
+  {
+    density_noise = m_noise.get_terrain_noise(x, y, data.blended_octaves, data.blended_thresholds);
+  }
+
+  return base_density + density_noise;
 }
 
 float world_generator_t::get_density(float x, float y, float z)
@@ -380,6 +384,7 @@ auto world_generator_t::generate_chunk(int chunk_x, int chunk_y) -> std::unique_
     };
     std::vector<local_strata_range_t> local_ranges;
     std::map<std::string, float> rock_group_usage;
+    std::string last_bottom_up_code = "";
 
     int ylower = 0;
     int yupper = surface_y;
@@ -419,6 +424,7 @@ auto world_generator_t::generate_chunk(int chunk_x, int chunk_y) -> std::unique_
         {
           local_ranges.push_back({"deepbound:" + stratum.block_code, ylower, (int)(ylower + actual_thickness)});
           ylower += (int)actual_thickness;
+          last_bottom_up_code = stratum.block_code;
         }
         rock_group_usage[stratum.rock_group] += actual_thickness;
       }
@@ -445,15 +451,36 @@ auto world_generator_t::generate_chunk(int chunk_x, int chunk_y) -> std::unique_
         // If the world is purple/black, we know strata logic is matching NONE.
         std::string rock_type = "deepbound:rock-obsidian";
 
+        // Fill Obsidian gaps if we have a valid BottomUp rock
+        // This handles cases where Sedimentary (TopDown) is banned (thickness 0)
+        // leaving a gap between ylower (Igneous top) and yupper (Surface).
+        if (!local_ranges.empty())
+        {
+          // If we are in the gap [ylower, yupper], use the last BottomUp stratum (usually Granite/Basalt)
+          // We can infer this by checking if we are above the highest BottomUp range.
+          // But simpler: just check ranges. If no range matches, and density > 0, we are in the "gap".
+          // We should find what the gap filler material is.
+          // We can do this by checking the last BottomUp rock recorded.
+        }
+
+        bool found = false;
         for (const auto &range : local_ranges)
         {
           float b_noise = m_noise.get_noise((float)wx * 0.02f, (float)wy * 0.02f) * 2.0f;
           if (wy >= (float)range.y_min + b_noise && wy <= (float)range.y_max + b_noise)
           {
             rock_type = range.code;
+            found = true;
             break;
           }
         }
+
+        // Fallback to last valid BottomUp rock if we are in the "Gap"
+        if (!found && !last_bottom_up_code.empty())
+        {
+          rock_type = "deepbound:" + last_bottom_up_code;
+        }
+
         chunk->set_tile(x, y, {rock_type});
       }
       else
