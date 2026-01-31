@@ -1,0 +1,26 @@
+{
+  "code": "rock",
+  "class": "BlockGeneric",
+  "variantgroups": [
+    {
+      "code": "type",
+      "states": [
+        "granite",
+        "basalt",
+        "limestone",
+        "sandstone"
+      ]
+    }
+  ],
+  "attributes": {
+    "sidesolid": {
+      "all": true
+    },
+    "mapColorCode": "gray"
+  },
+  "textures": {
+    "all": "block/rock/{type}"
+  },
+  "resistance": 8,
+  "drawtype": "cube"
+}

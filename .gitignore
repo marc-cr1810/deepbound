@@ -1,0 +1,34 @@
+
+# Crash Reports
+crash_report_*.txt
+
+# Build directories
+build/
+bin/
+lib/
+
+# IDE/Editor
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# Compilation artifacts (if not in build/)
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+
+# Generated artifacts
+imgui.ini
+
+# Logs
+log/
+logs/
+*.log
+
+
+vssurvivalmod-master/

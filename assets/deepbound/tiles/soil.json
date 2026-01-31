@@ -1,0 +1,26 @@
+{
+  "code": "soil",
+  "class": "BlockSoil",
+  "variantgroups": [
+    {
+      "code": "fertility",
+      "states": [
+        "none",
+        "low",
+        "medium",
+        "high"
+      ]
+    }
+  ],
+  "attributes": {
+    "sidesolid": {
+      "all": true
+    },
+    "mapColorCode": "brown"
+  },
+  "textures": {
+    "all": "block/soil/fert{fertility}"
+  },
+  "resistance": 1.8,
+  "drawtype": "cube"
+}
