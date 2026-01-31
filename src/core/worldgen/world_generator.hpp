@@ -5,9 +5,11 @@
 #include "core/worldgen/world_gen_context.hpp"
 #include <memory>
 #include <vector>
+#include <array>
 #include <unordered_map>
 #include <string>
 #include <map>
+#include <mutex>
 
 namespace deepbound
 {
@@ -25,6 +27,7 @@ struct column_data_t
   float upheaval = 0.0f;
   std::vector<double> blended_octaves;
   std::vector<double> blended_thresholds;
+  float max_noise_amp = 0.0f;
 };
 
 class world_generator_t
@@ -33,6 +36,9 @@ public:
   world_generator_t();
 
   auto generate_chunk(int chunk_x, int chunk_y) -> std::unique_ptr<chunk_t>;
+
+  static const resource_id_t AIR_ID;
+  static const resource_id_t WATER_ID;
 
 private:
   auto init_context() -> void;
@@ -58,17 +64,36 @@ private:
   int m_world_height = 512;
   int m_sea_level = 220; // Default VS logic (110/256 * 512)
 
-  // Cache for surface heights to avoid redundant searches
-  std::unordered_map<int, int> m_surface_cache;
-
-  // Reusable buffers for per-column generation to avoid allocations
+  // Reusable buffers for per-column generation
   struct strata_range_t
   {
     std::string code;
     int y_min, y_max;
   };
+
+  struct cached_column_info_t
+  {
+    column_data_t data;
+    int surface_y;
+    std::vector<strata_range_t> strata_ranges;
+    std::string last_bottom_up_code;
+  };
+
+  // Sharded cache to reduce mutex contention (32 shards)
+  struct column_cache_shard_t
+  {
+    std::unordered_map<int, std::shared_ptr<cached_column_info_t>> map;
+    std::mutex mutex;
+  };
+  std::array<column_cache_shard_t, 32> m_column_caches;
+
+  // Reusable buffers for per-column generation
   std::vector<strata_range_t> m_column_ranges_buffer;
-  std::map<std::string, float> m_rock_group_cur_buffer;
+  // Use vector for small N linear search instead of map allocation
+  std::vector<std::pair<std::string, float>> m_rock_group_cur_buffer;
+
+  // Buffer for landform candidates to avoid vector reallocation
+  std::vector<const landform_variant_t *> m_landform_candidates_buffer;
 
   // Climate noise
   fast_noise_wrapper_t m_temp_noise;

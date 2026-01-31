@@ -10,6 +10,9 @@
 namespace deepbound
 {
 
+const resource_id_t world_generator_t::AIR_ID("deepbound:air");
+const resource_id_t world_generator_t::WATER_ID("deepbound:water");
+
 world_generator_t::world_generator_t() : m_noise(0), m_temp_noise(0), m_rain_noise(0), m_province_noise(0), m_strata_noise(0), m_upheaval_noise(0)
 {
   std::random_device rd;
@@ -67,8 +70,11 @@ auto world_generator_t::get_landform_weights(float x, float y, std::vector<landf
   float rain = (m_rain_noise.get_noise(x * 0.0001f, 0) + 1.0f) * 128.0f;
 
   // Determine candidate landforms based on climate
+  // Determine candidate landforms based on climate
   float total_candidate_weight = 0.0f;
-  std::vector<const landform_variant_t *> candidates;
+
+  static thread_local std::vector<const landform_variant_t *> candidates;
+  candidates.clear();
 
   for (const auto &lf : m_context.landforms)
   {
@@ -205,6 +211,7 @@ auto world_generator_t::prepare_column_data(float x, float z) -> column_data_t
 {
   column_data_t data;
   get_landform_weights(x, z, data.weights);
+  data.max_noise_amp = 0.0f;
 
   if (!data.weights.empty())
   {
@@ -229,6 +236,13 @@ auto world_generator_t::prepare_column_data(float x, float z) -> column_data_t
         }
       }
     }
+
+    // Calculate max noise amplitude for bounding
+    for (double val : data.blended_octaves)
+    {
+      data.max_noise_amp += (float)std::abs(val);
+    }
+
     // surface_noise is no longer calculated here as it is now part of the density function
     data.surface_noise = 0.0f;
   }
@@ -251,6 +265,13 @@ auto world_generator_t::get_density_from_column(float x, float y, const column_d
   }
 
   float base_density = (blended_y_offset - 0.5f) * 6.0f + data.upheaval;
+
+  // Optimization: Early-out if noise cannot physically change the air/solid state
+  // Using 1.0 margin as get_terrain_noise is normalized approx -1..1
+  if (base_density > 1.0f)
+    return 1.0f; // Definitely solid
+  if (base_density < -1.0f)
+    return -1.0f; // Definitely air
 
   // Use the blended landform noise configuration for the detailed density noise
   // This allows the noise character to change based on the landform (smooth vs jagged)
@@ -339,134 +360,142 @@ auto world_generator_t::generate_chunk(int chunk_x, int chunk_y) -> std::unique_
   {
     int wx = world_x_base + x;
 
-    float sample_x = (float)wx;
-    float temp = m_temp_noise.get_noise(sample_x * 0.0001f, 0) * 50.0f;
-    float rain = (m_rain_noise.get_noise(sample_x * 0.0001f, 0) + 1.0f) * 128.0f;
+    std::shared_ptr<cached_column_info_t> col_info_ptr;
 
-    const landform_variant_t *current_lf = get_landform(sample_x, 0);
-
-    // Safety check for null landform
-    if (!current_lf)
+    // Use Shard 0-31 based on World X
+    auto &shard = m_column_caches[wx & 31];
     {
-      // Fallback or skip
-      // For now, if we have NO landforms, we can't do much.
-      // Assume a default or return early to avoid crash.
-      // However, we need to fill the chunk with SOMETHING.
-      // Let's just create a dummy/default if logic allows, or just skip advanced logic.
-    }
-
-    const geologic_province_variant_t *current_province = get_province(sample_x, 0);
-
-    // Optimization: Pre-calculate column data (weights and surface noise)
-    auto col_data = prepare_column_data((float)wx, 0.0f);
-
-    // 2. Optimized Surface Search
-    int surface_y = 0;
-    int start_y = std::min(m_world_height - 1, std::max(0, prev_surface_y + 32));
-
-    // Use full get_density for surface find. It's slower but correct with blending.
-    // Optimization: we could implement a "get_approximate_surface" but for now correct > fast.
-    for (int sy = start_y; sy >= 0; --sy)
-    {
-      if (get_density_from_column((float)wx, (float)sy, col_data) > 0.0f)
+      std::lock_guard<std::mutex> lock(shard.mutex);
+      auto it = shard.map.find(wx);
+      if (it != shard.map.end())
       {
-        surface_y = sy;
-        break;
-      }
-    }
-    prev_surface_y = surface_y;
-
-    // 3. THREAD SAFE: Use local buffer for column ranges
-    struct local_strata_range_t
-    {
-      std::string code;
-      int y_min, y_max;
-    };
-    std::vector<local_strata_range_t> local_ranges;
-    std::map<std::string, float> rock_group_usage;
-    std::string last_bottom_up_code = "";
-
-    int ylower = 0;
-    int yupper = surface_y;
-
-    for (const auto &stratum : m_context.rock_strata)
-    {
-      std::vector<float> scaled_freqs = stratum.frequencies;
-      for (auto &f : scaled_freqs)
-        f *= 0.1f; // Broad layers
-
-      float thickness_raw = m_noise.get_custom_noise((float)wx, 0.0f, stratum.amplitudes, stratum.thresholds, scaled_freqs);
-
-      // Base thickness of 20 ensures we ALWAYS see layers, random variance on top
-      float thickness = thickness_raw * 10.0f + 20.0f;
-
-      float max_allowed = 999.0f;
-      if (current_province)
-      {
-        auto it = current_province->rock_strata_thickness.find(stratum.rock_group);
-        if (it != current_province->rock_strata_thickness.end())
-        {
-          max_allowed = it->second * 2.0f; // Scale for world height
-        }
-      }
-
-      float allowed = max_allowed - rock_group_usage[stratum.rock_group];
-      float actual_thickness = std::min(thickness, std::max(0.0f, allowed));
-
-      if (actual_thickness >= 2.0f) // Minimum visible thickness
-      {
-        if (stratum.gen_dir == "TopDown")
-        {
-          local_ranges.push_back({"deepbound:" + stratum.block_code, (int)(yupper - actual_thickness), yupper});
-          yupper -= (int)actual_thickness;
-        }
-        else
-        {
-          local_ranges.push_back({"deepbound:" + stratum.block_code, ylower, (int)(ylower + actual_thickness)});
-          ylower += (int)actual_thickness;
-          last_bottom_up_code = stratum.block_code;
-        }
-        rock_group_usage[stratum.rock_group] += actual_thickness;
+        col_info_ptr = it->second;
       }
     }
 
-    // 4. Column block filling
-    // No longer need optimized h_noise precalc since get_density handles it properly with blending.
+    if (!col_info_ptr)
+    {
+      col_info_ptr = std::make_shared<cached_column_info_t>();
 
+      // 1. Prepare Data
+      col_info_ptr->data = prepare_column_data((float)wx, 0.0f);
+
+      // 2. Surface Find
+      int surface_y = 0;
+      int start_y = std::min(m_world_height - 1, std::max(0, prev_surface_y + 32));
+
+      for (int sy = start_y; sy >= 0; --sy)
+      {
+        if (get_density_from_column((float)wx, (float)sy, col_info_ptr->data) > 0.0f)
+        {
+          surface_y = sy;
+          break;
+        }
+      }
+      col_info_ptr->surface_y = surface_y;
+
+      // 3. Strata Generation
+      const geologic_province_variant_t *current_province = get_province((float)wx, 0);
+
+      static thread_local std::vector<std::pair<std::string, float>> rock_usage;
+      rock_usage.clear();
+
+      int ylower = 0;
+      int yupper = surface_y;
+      std::string last_bu_code = "";
+
+      for (const auto &stratum : m_context.rock_strata)
+      {
+        std::vector<float> scaled_freqs = stratum.frequencies;
+        for (auto &f : scaled_freqs)
+          f *= 0.1f;
+
+        float thickness_raw = m_noise.get_custom_noise((float)wx, 0.0f, stratum.amplitudes, stratum.thresholds, scaled_freqs);
+        float thickness = thickness_raw * 10.0f + 20.0f;
+
+        float max_allowed = 999.0f;
+        if (current_province)
+        {
+          auto it = current_province->rock_strata_thickness.find(stratum.rock_group);
+          if (it != current_province->rock_strata_thickness.end())
+          {
+            max_allowed = it->second * 2.0f;
+          }
+        }
+
+        float used = 0.0f;
+        for (const auto &p : rock_usage)
+        {
+          if (p.first == stratum.rock_group)
+          {
+            used = p.second;
+            break;
+          }
+        }
+
+        float allowed = max_allowed - used;
+        float actual_thickness = std::min(thickness, std::max(0.0f, allowed));
+
+        if (actual_thickness >= 2.0f)
+        {
+          if (stratum.gen_dir == "TopDown")
+          {
+            col_info_ptr->strata_ranges.push_back({"deepbound:" + stratum.block_code, (int)(yupper - actual_thickness), yupper});
+            yupper -= (int)actual_thickness;
+          }
+          else
+          {
+            col_info_ptr->strata_ranges.push_back({"deepbound:" + stratum.block_code, ylower, (int)(ylower + actual_thickness)});
+            ylower += (int)actual_thickness;
+            last_bu_code = stratum.block_code;
+          }
+
+          bool found_r = false;
+          for (auto &p : rock_usage)
+          {
+            if (p.first == stratum.rock_group)
+            {
+              p.second += actual_thickness;
+              found_r = true;
+              break;
+            }
+          }
+          if (!found_r)
+            rock_usage.push_back({stratum.rock_group, actual_thickness});
+        }
+      }
+      col_info_ptr->last_bottom_up_code = last_bu_code;
+
+      {
+        std::lock_guard<std::mutex> lock(shard.mutex);
+        shard.map[wx] = col_info_ptr;
+      }
+    }
+
+    prev_surface_y = col_info_ptr->surface_y;
+
+    // 4. Block Filling
     for (int y = 0; y < CHUNK_SIZE; ++y)
     {
       int wy = world_y_base + y;
 
       if (wy >= m_world_height)
       {
-        chunk->set_tile(x, y, {"deepbound:air"});
+        chunk->set_tile(x, y, AIR_ID);
         continue;
       }
 
-      float density = get_density_from_column((float)wx, (float)wy, col_data);
+      float density = get_density_from_column((float)wx, (float)wy, col_info_ptr->data);
 
       if (density > 0.0f)
       {
-        // Default fallback to obsidian for EASY verification (Purple/Black)
-        // If the world is purple/black, we know strata logic is matching NONE.
         std::string rock_type = "deepbound:rock-obsidian";
 
-        // Fill Obsidian gaps if we have a valid BottomUp rock
-        // This handles cases where Sedimentary (TopDown) is banned (thickness 0)
-        // leaving a gap between ylower (Igneous top) and yupper (Surface).
-        if (!local_ranges.empty())
-        {
-          // If we are in the gap [ylower, yupper], use the last BottomUp stratum (usually Granite/Basalt)
-          // We can infer this by checking if we are above the highest BottomUp range.
-          // But simpler: just check ranges. If no range matches, and density > 0, we are in the "gap".
-          // We should find what the gap filler material is.
-          // We can do this by checking the last BottomUp rock recorded.
-        }
+        float b_noise = m_noise.get_noise((float)wx * 0.02f, (float)wy * 0.02f) * 2.0f;
 
         bool found = false;
-        for (const auto &range : local_ranges)
+        for (const auto &range : col_info_ptr->strata_ranges)
         {
-          float b_noise = m_noise.get_noise((float)wx * 0.02f, (float)wy * 0.02f) * 2.0f;
           if (wy >= (float)range.y_min + b_noise && wy <= (float)range.y_max + b_noise)
           {
             rock_type = range.code;
@@ -475,20 +504,19 @@ auto world_generator_t::generate_chunk(int chunk_x, int chunk_y) -> std::unique_
           }
         }
 
-        // Fallback to last valid BottomUp rock if we are in the "Gap"
-        if (!found && !last_bottom_up_code.empty())
+        if (!found && !col_info_ptr->last_bottom_up_code.empty())
         {
-          rock_type = "deepbound:" + last_bottom_up_code;
+          rock_type = "deepbound:" + col_info_ptr->last_bottom_up_code;
         }
 
-        chunk->set_tile(x, y, {rock_type});
+        chunk->set_tile(x, y, {rock_type}); // Still allocs temp string for rock types (less common than Air/Water)
       }
       else
       {
         if (wy < m_sea_level)
-          chunk->set_tile(x, y, {"deepbound:water"});
+          chunk->set_tile(x, y, WATER_ID);
         else
-          chunk->set_tile(x, y, {"deepbound:air"});
+          chunk->set_tile(x, y, AIR_ID);
       }
     }
   }
