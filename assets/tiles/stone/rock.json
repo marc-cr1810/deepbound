@@ -5,10 +5,36 @@
     {
       "code": "type",
       "states": [
-        "granite",
+        "obsidian",
+        "cobblestone",
+        "andesite",
         "basalt",
+        "diorite",
+        "granite",
+        "sandstone",
+        "tuff",
+        "anthracite",
+        "bauxite",
+        "chalk",
+        "chert",
+        "claystone",
+        "conglomerate",
+        "green_marble",
+        "halite",
+        "kimberlite",
         "limestone",
-        "sandstone"
+        "mantle",
+        "peridotite",
+        "phyllite",
+        "pink_marble",
+        "scoria",
+        "shale",
+        "slate",
+        "suevite",
+        "white_marble",
+        "gneiss",
+        "schist",
+        "rhyolite"
       ]
     }
   ],
@@ -19,7 +45,7 @@
     "mapColorCode": "gray"
   },
   "textures": {
-    "all": "tile/rock/{type}"
+    "all": "tile/stone/rock/{type}"
   },
   "resistance": 8,
   "drawtype": "cube"

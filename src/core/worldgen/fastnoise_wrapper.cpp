@@ -1,4 +1,5 @@
 #include "core/worldgen/fastnoise_wrapper.hpp"
+#include <cmath>
 
 namespace deepbound
 {
@@ -58,7 +59,7 @@ auto fast_noise_wrapper_t::get_terrain_noise(float x, float y, const std::vector
 {
   float total_noise = 0.0f;
   float total_amp = 0.0f;
-  float freq = 0.0005f; // Base frequency from VS GenTerra (0.0005)
+  float freq = 0.0002f; // Lowered base frequency for smoother hills
 
   for (size_t i = 0; i < amplitudes.size(); ++i)
   {
@@ -72,10 +73,33 @@ auto fast_noise_wrapper_t::get_terrain_noise(float x, float y, const std::vector
       total_amp += std::abs(amp);
     }
 
-    freq *= 2.0f;
+    freq *= 1.6f; // Lowered lacunarity to reduce jaggedness
   }
 
   return (total_amp > 0.0f) ? (total_noise / total_amp) : 0.0f;
+}
+
+auto fast_noise_wrapper_t::get_custom_noise(float x, float y, const std::vector<float> &amplitudes, const std::vector<float> &thresholds, const std::vector<float> &frequencies) const -> float
+{
+  float total_noise = 0.0f;
+
+  for (size_t i = 0; i < amplitudes.size(); ++i)
+  {
+    float amp = amplitudes[i];
+    float th = (i < thresholds.size()) ? thresholds[i] : 0.0f;
+    float freq = (i < frequencies.size()) ? frequencies[i] : (0.0002f * std::pow(1.6f, (float)i));
+
+    if (amp != 0.0f)
+    {
+      float val = m_simplex_base->GenSingle2D(x * freq, y * freq, m_seed + (int)i * 1337);
+      // Map [-1, 1] to [0, 1] then apply amplitude and subtract threshold
+      // This matches the behavior where threshold is roughly amp/2
+      float octave_val = (val + 1.0f) * 0.5f * amp;
+      total_noise += std::max(0.0f, octave_val - th);
+    }
+  }
+
+  return total_noise;
 }
 
 } // namespace deepbound

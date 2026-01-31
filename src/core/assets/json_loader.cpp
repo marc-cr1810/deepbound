@@ -78,19 +78,24 @@ auto json_loader_t::parse_and_register_tile(const std::string &json_content, con
       }
     }
 
-    // Determine states for variants
+    // Determine states for variants from variantgroups
     std::string placeholder = "";
     std::vector<std::string> states;
 
-    if (base_def.code == "rock")
+    if (j.contains("variantgroups"))
     {
-      placeholder = "{type}";
-      states = {"basalt", "limestone", "sandstone", "granite"};
-    }
-    else if (base_def.code == "soil")
-    {
-      placeholder = "{fertility}";
-      states = {"none", "low", "medium", "high"};
+      for (auto &group : j["variantgroups"])
+      {
+        if (group.contains("states") && group.contains("code"))
+        {
+          placeholder = "{" + group["code"].get<std::string>() + "}";
+          for (auto &s : group["states"])
+          {
+            states.push_back(s.get<std::string>());
+          }
+          break; // Support one variant group for now (e.g., {type} or {fertility})
+        }
+      }
     }
 
     // If we have variants, register them. If not, just register the base.

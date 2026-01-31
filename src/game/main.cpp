@@ -43,8 +43,8 @@ int main(int argc, char *argv[])
   // Renderer
   deepbound::ChunkRenderer renderer;
   deepbound::Camera2D camera;
-  camera.set_position({0.0f, 500.0f}); // Start above sea level
-  camera.set_zoom(0.01f);              // Zoom out a bit to see more
+  camera.set_position({0.0f, 250.0f}); // Adjusted for new world height/sea level
+  camera.set_zoom(0.01f);
 
   // Setup Zoom Callback
   window.set_scroll_callback([&camera](double x, double y) { camera.zoom_scroll((float)y); });

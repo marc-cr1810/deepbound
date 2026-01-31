@@ -5,6 +5,9 @@
 #include "core/worldgen/world_gen_context.hpp"
 #include <memory>
 #include <vector>
+#include <unordered_map>
+#include <string>
+#include <map>
 
 namespace deepbound
 {
@@ -20,6 +23,7 @@ private:
   auto init_context() -> void;
   // returns density -1 to 1
   auto get_density(float x, float y, const landform_variant_t *lf) -> float;
+  auto get_density_fast(float x, float y, float surface_noise, const landform_variant_t *lf) -> float;
   auto get_landform(float x, float y, float temp, float rain) -> const landform_variant_t *;
 
   // New: Geologic Province
@@ -31,6 +35,21 @@ private:
 
   world_gen_context_t m_context;
   fast_noise_wrapper_t m_noise;
+
+  int m_world_height = 512;
+  int m_sea_level = 220; // Default VS logic (110/256 * 512)
+
+  // Cache for surface heights to avoid redundant searches
+  std::unordered_map<int, int> m_surface_cache;
+
+  // Reusable buffers for per-column generation to avoid allocations
+  struct strata_range_t
+  {
+    std::string code;
+    int y_min, y_max;
+  };
+  std::vector<strata_range_t> m_column_ranges_buffer;
+  std::map<std::string, float> m_rock_group_cur_buffer;
 
   // Climate noise
   fast_noise_wrapper_t m_temp_noise;

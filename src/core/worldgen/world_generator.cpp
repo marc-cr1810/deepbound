@@ -3,6 +3,8 @@
 #include "core/common/resource_id.hpp"
 #include <iostream>
 #include <cmath>
+#include <algorithm>
+#include <map>
 
 namespace deepbound
 {
@@ -17,13 +19,10 @@ auto world_generator_t::init_context() -> void
   if (m_initialized)
     return;
 
-  // Hardcoded path to reference assets for now - In production, use configurated asset path
-  // Assuming we are running from project root/build
-  // Target "assets/worldgen" as requested by user
   std::string assets_path = "c:/Programming/C++/deepbound/assets/worldgen";
   json_loader_t::load_worldgen(assets_path, m_context);
 
-  std::cout << "WorldGen Initialized. Loaded " << m_context.landforms.size() << " landforms." << std::endl;
+  std::cout << "WorldGen Initialized. Loaded " << m_context.landforms.size() << " landforms, " << m_context.rock_strata.size() << " strata, " << m_context.geologic_provinces.size() << " provinces." << std::endl;
   m_initialized = true;
 }
 
@@ -32,7 +31,6 @@ auto world_generator_t::get_landform(float x, float y, float temp, float rain) -
   if (m_context.landforms.empty())
     return nullptr;
 
-  // Weighted choice among candidates.
   float total_weight = 0.0f;
   std::vector<const landform_variant_t *> candidates;
 
@@ -56,10 +54,8 @@ auto world_generator_t::get_landform(float x, float y, float temp, float rain) -
   if (candidates.empty())
     return &m_context.landforms[0];
 
-  // Pick deterministic weighted random based on coordinates
-  // Use a simple hash of x, y to pick the landform
-  uint32_t seed = (uint32_t)x * 73856093 ^ (uint32_t)y * 19349663;
-  float r = (float)(seed % 1000) / 1000.0f * total_weight;
+  float noise_pick = (m_noise.get_noise(x * 0.0002f, 13) + 1.0f) * 0.5f;
+  float r = noise_pick * total_weight;
 
   float current_weight = 0.0f;
   for (const auto *lf : candidates)
@@ -77,23 +73,23 @@ auto world_generator_t::get_density(float x, float y, const landform_variant_t *
   if (!lf)
     return -1.0f;
 
-  // 1. Base Height Noise (Horizontal only)
-  // This defines the rolling hills / surface shape.
   float surface_noise = m_noise.get_terrain_noise(x, 0, lf->terrain_octaves);
+  return get_density_fast(x, y, surface_noise, lf);
+}
 
-  // 2. Y-Gradient (The "offset")
-  float map_height = 1024.0f;
-  float normalized_y = y / map_height;
+auto world_generator_t::get_density_fast(float x, float y, float surface_noise, const landform_variant_t *lf) -> float
+{
+  if (!lf)
+    return -1.0f;
+
+  float normalized_y = y / (float)m_world_height;
   float y_offset = lf->y_key_thresholds.evaluate(normalized_y);
 
-  // 3. Combine into base density
-  // Normalize threshold to -1..1 range if needed, but assuming 0..1 from JSON
-  // If y_offset is 1.0 at bottom and 0.0 at top, we want it to cross 0 at the surface.
-  // Surface is where surface_noise + (y_offset - 0.5) == 0
-  float base_density = (y_offset - 0.5f) * 4.0f + surface_noise;
+  float base_density = (y_offset - 0.5f) * 6.0f + surface_noise;
+  float upheaval = m_noise.get_noise(x * 0.0005f, 555) * 0.1f;
+  base_density += upheaval;
 
-  // 4. Detail Noise (2D) for overhangs and interest (low frequency)
-  float detail_noise = m_noise.get_terrain_noise(x, y * 0.5f, {0, 0, 0.1, 0.2, 0.1});
+  float detail_noise = m_noise.get_terrain_noise(x, y * 0.25f, {0, 0, 0.05, 0.05, 0.02});
 
   return base_density + detail_noise;
 }
@@ -103,10 +99,8 @@ auto world_generator_t::get_province(float x, float y) -> const geologic_provinc
   if (m_context.geologic_provinces.empty())
     return nullptr;
 
-  float noise_val = m_province_noise.get_cellular(x, y, 0.002f); // Low freq for large provinces
-
-  // Map -1..1 to 0..size-1
-  float normalized = (noise_val + 1.0f) * 0.5f; // 0..1
+  float noise_val = m_noise.get_noise(x * 0.001f, 99);
+  float normalized = (noise_val + 1.0f) * 0.5f;
   size_t index = (size_t)(normalized * m_context.geologic_provinces.size());
   if (index >= m_context.geologic_provinces.size())
     index = m_context.geologic_provinces.size() - 1;
@@ -116,46 +110,7 @@ auto world_generator_t::get_province(float x, float y) -> const geologic_provinc
 
 auto world_generator_t::get_rock_strata(float x, float y, float density, const geologic_province_variant_t *province) -> std::string
 {
-  // Default string
-  std::string selected_rock = "deepbound:rock-granite";
-
-  bool province_has_strata = (province != nullptr && !province->rock_strata_thickness.empty());
-
-  for (const auto &strata : m_context.rock_strata)
-  {
-    // Check Province constraints
-    if (province_has_strata)
-    {
-      // Check if this strata's rock group is allowed in this province
-      auto it = province->rock_strata_thickness.find(strata.rock_group);
-      if (it == province->rock_strata_thickness.end() || it->second <= 0.0f)
-      {
-        continue;
-      }
-    }
-
-    float freq = strata.frequencies.empty() ? 0.05f : strata.frequencies[0];
-    float threshold = strata.thresholds.empty() ? 0.5f : strata.thresholds[0];
-
-    float noise_val = m_strata_noise.get_noise(x * freq, y * freq);
-
-    if (strata.gen_dir == "TopDown")
-    {
-      if (y > 450 && noise_val > threshold)
-      {
-        return "deepbound:" + strata.block_code;
-      }
-    }
-    else if (strata.gen_dir == "BottomUp")
-    {
-      if (y < 400 && noise_val > threshold)
-      {
-        return "deepbound:" + strata.block_code;
-      }
-    }
-  }
-
-  return selected_rock;
+  return "deepbound:rock-granite";
 }
 
 auto world_generator_t::generate_chunk(int chunk_x, int chunk_y) -> std::unique_ptr<Chunk>
@@ -165,45 +120,139 @@ auto world_generator_t::generate_chunk(int chunk_x, int chunk_y) -> std::unique_
   int world_x_base = chunk_x * CHUNK_SIZE;
   int world_y_base = chunk_y * CHUNK_SIZE;
 
-  const landform_variant_t *current_lf = nullptr;
-  const geologic_province_variant_t *current_province = nullptr;
+  int prev_surface_y = m_world_height / 2;
 
   for (int x = 0; x < CHUNK_SIZE; ++x)
   {
     int wx = world_x_base + x;
 
-    // Smoothing: Sample climate and landform once every 32 blocks to minimize vertical artifacts.
-    float sample_x = std::floor((float)wx / 32.0f) * 32.0f;
-    float temp = m_temp_noise.get_noise(sample_x * 0.001f, 0) * 50.0f;
-    float rain = (m_rain_noise.get_noise(sample_x * 0.001f, 0) + 1.0f) * 128.0f;
+    float sample_x = (float)wx;
+    float temp = m_temp_noise.get_noise(sample_x * 0.0001f, 0) * 50.0f;
+    float rain = (m_rain_noise.get_noise(sample_x * 0.0001f, 0) + 1.0f) * 128.0f;
 
-    current_lf = get_landform(sample_x, 0, temp, rain);
-    current_province = get_province(sample_x, 0);
+    const landform_variant_t *current_lf = get_landform(sample_x, 0, temp, rain);
+    const geologic_province_variant_t *current_province = get_province(sample_x, 0);
+
+    // 2. Optimized Surface Search
+    int surface_y = 0;
+    // THREAD SAFETY: Surface cache uses atomics or mutex if global, but here we just clear it periodically or it's per-generator
+    // For now, let's just re-calculate if not in cache (mutex removed for speed)
+    auto cache_it = m_surface_cache.find(wx);
+    if (cache_it != m_surface_cache.end())
+    {
+      surface_y = cache_it->second;
+    }
+    else
+    {
+      float h_noise = m_noise.get_terrain_noise((float)wx, 0, current_lf->terrain_octaves);
+      float upheaval = m_noise.get_noise((float)wx * 0.0005f, 555) * 0.1f;
+
+      int start_y = std::min(m_world_height - 1, std::max(0, prev_surface_y + 32));
+      for (int sy = start_y; sy >= 0; --sy)
+      {
+        float normalized_y = (float)sy / (float)m_world_height;
+        float y_offset = current_lf->y_key_thresholds.evaluate(normalized_y);
+        if ((y_offset - 0.5f) * 6.0f + h_noise + upheaval > 0.0f)
+        {
+          surface_y = sy;
+          break;
+        }
+      }
+      m_surface_cache[wx] = surface_y;
+    }
+    prev_surface_y = surface_y;
+
+    // 3. THREAD SAFE: Use local buffer for column ranges
+    struct local_strata_range_t
+    {
+      std::string code;
+      int y_min, y_max;
+    };
+    std::vector<local_strata_range_t> local_ranges;
+    std::map<std::string, float> rock_group_usage;
+
+    int ylower = 0;
+    int yupper = surface_y;
+
+    for (const auto &stratum : m_context.rock_strata)
+    {
+      std::vector<float> scaled_freqs = stratum.frequencies;
+      for (auto &f : scaled_freqs)
+        f *= 0.1f; // Broad layers
+
+      float thickness_raw = m_noise.get_custom_noise((float)wx, 0.0f, stratum.amplitudes, stratum.thresholds, scaled_freqs);
+
+      // Base thickness of 20 ensures we ALWAYS see layers, random variance on top
+      float thickness = thickness_raw * 10.0f + 20.0f;
+
+      float max_allowed = 999.0f;
+      if (current_province)
+      {
+        auto it = current_province->rock_strata_thickness.find(stratum.rock_group);
+        if (it != current_province->rock_strata_thickness.end())
+        {
+          max_allowed = it->second * 2.0f; // Scale for world height
+        }
+      }
+
+      float allowed = max_allowed - rock_group_usage[stratum.rock_group];
+      float actual_thickness = std::min(thickness, std::max(0.0f, allowed));
+
+      if (actual_thickness >= 2.0f) // Minimum visible thickness
+      {
+        if (stratum.gen_dir == "TopDown")
+        {
+          local_ranges.push_back({"deepbound:" + stratum.block_code, (int)(yupper - actual_thickness), yupper});
+          yupper -= (int)actual_thickness;
+        }
+        else
+        {
+          local_ranges.push_back({"deepbound:" + stratum.block_code, ylower, (int)(ylower + actual_thickness)});
+          ylower += (int)actual_thickness;
+        }
+        rock_group_usage[stratum.rock_group] += actual_thickness;
+      }
+    }
+
+    // 4. Column block filling
+    float h_noise = m_noise.get_terrain_noise((float)wx, 0, current_lf->terrain_octaves);
+    float upheaval = m_noise.get_noise((float)wx * 0.0005f, 555) * 0.1f;
 
     for (int y = 0; y < CHUNK_SIZE; ++y)
     {
       int wy = world_y_base + y;
 
-      float density = get_density((float)wx, (float)wy, current_lf);
+      if (wy >= m_world_height)
+      {
+        chunk->set_tile(x, y, {"deepbound:air"});
+        continue;
+      }
+
+      float density = get_density_fast((float)wx, (float)wy, h_noise, current_lf);
 
       if (density > 0.0f)
       {
-        // SOLID
-        std::string rock_type = get_rock_strata((float)wx, (float)wy, density, current_province);
+        // Default fallback to obsidian for EASY verification (Purple/Black)
+        // If the world is purple/black, we know strata logic is matching NONE.
+        std::string rock_type = "deepbound:rock-obsidian";
+
+        for (const auto &range : local_ranges)
+        {
+          float b_noise = m_noise.get_noise((float)wx * 0.02f, (float)wy * 0.02f) * 2.0f;
+          if (wy >= (float)range.y_min + b_noise && wy <= (float)range.y_max + b_noise)
+          {
+            rock_type = range.code;
+            break;
+          }
+        }
         chunk->set_tile(x, y, {rock_type});
       }
       else
       {
-        // AIR or WATER (Sea Level at ~440 for 1024 height - approx 43%)
-        int sea_level = 440;
-        if (wy < sea_level)
-        {
+        if (wy < m_sea_level)
           chunk->set_tile(x, y, {"deepbound:water"});
-        }
         else
-        {
           chunk->set_tile(x, y, {"deepbound:air"});
-        }
       }
     }
   }

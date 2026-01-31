@@ -30,6 +30,9 @@ public:
   // Get custom weighted terrain noise with thresholds
   auto get_terrain_noise(float x, float y, const std::vector<double> &amplitudes, const std::vector<double> &thresholds = {}) const -> float;
 
+  // New: Get custom noise with explicit frequencies (for rock strata)
+  auto get_custom_noise(float x, float y, const std::vector<float> &amplitudes, const std::vector<float> &thresholds = {}, const std::vector<float> &frequencies = {}) const -> float;
+
 private:
   int m_seed;
   // We can keep a few preset generators for efficiency
