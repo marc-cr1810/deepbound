@@ -32,14 +32,9 @@ auto world_generator_t::get_landform(float x, float y, float temp, float rain) -
   if (m_context.landforms.empty())
     return nullptr;
 
-  const landform_variant_t *selected = nullptr;
-
-  // Naive selection: First match that fits climate constraints.
-  // A better approach (VS style) is weighted random choice among valid candidates
-  // or finding the "closest" fit. For now, strict range check + weight.
-
-  // Default to first one if nothing matches
-  selected = &m_context.landforms[0];
+  // Weighted choice among candidates.
+  float total_weight = 0.0f;
+  std::vector<const landform_variant_t *> candidates;
 
   for (const auto &lf : m_context.landforms)
   {
@@ -47,45 +42,60 @@ auto world_generator_t::get_landform(float x, float y, float temp, float rain) -
     {
       if (temp >= lf.min_temp && temp <= lf.max_temp && rain >= lf.min_rain && rain <= lf.max_rain)
       {
-        selected = &lf;
-        // Ideally we accumulate weights and pick randomly,
-        // but for initial valid world gen, first match is acceptable or a specific priority.
-        // Let's break on first valid non-default match for now to see variation.
-        break;
+        candidates.push_back(&lf);
+        total_weight += lf.weight;
       }
     }
     else
     {
-      // Non-climate landforms (e.g. erratic features)
-      // could be selected by a separate noise mask or low weight random chance.
+      candidates.push_back(&lf);
+      total_weight += lf.weight;
     }
   }
 
-  return selected;
+  if (candidates.empty())
+    return &m_context.landforms[0];
+
+  // Pick deterministic weighted random based on coordinates
+  // Use a simple hash of x, y to pick the landform
+  uint32_t seed = (uint32_t)x * 73856093 ^ (uint32_t)y * 19349663;
+  float r = (float)(seed % 1000) / 1000.0f * total_weight;
+
+  float current_weight = 0.0f;
+  for (const auto *lf : candidates)
+  {
+    current_weight += lf->weight;
+    if (r <= current_weight)
+      return lf;
+  }
+
+  return candidates.back();
 }
 
 auto world_generator_t::get_density(float x, float y, const landform_variant_t *lf) -> float
 {
-  // 2D Density Generation
+  if (!lf)
+    return -1.0f;
 
-  // 1. Base Noise (Terrain)
-  float noise = m_noise.get_simplex_fractal(x, y, 0.01f, 4);
+  // 1. Base Height Noise (Horizontal only)
+  // This defines the rolling hills / surface shape.
+  float surface_noise = m_noise.get_terrain_noise(x, 0, lf->terrain_octaves);
 
-  // 2. Y-Level Spline Threshold
-  float map_height = 256.0f;
+  // 2. Y-Gradient (The "offset")
+  float map_height = 1024.0f;
   float normalized_y = y / map_height;
+  float y_offset = lf->y_key_thresholds.evaluate(normalized_y);
 
-  float threshold = 0.0f;
-  if (lf)
-  {
-    threshold = lf->y_key_thresholds.evaluate(normalized_y);
-  }
+  // 3. Combine into base density
+  // Normalize threshold to -1..1 range if needed, but assuming 0..1 from JSON
+  // If y_offset is 1.0 at bottom and 0.0 at top, we want it to cross 0 at the surface.
+  // Surface is where surface_noise + (y_offset - 0.5) == 0
+  float base_density = (y_offset - 0.5f) * 4.0f + surface_noise;
 
-  // 3. Upheaval (Placeholder)
-  // float upheaval = m_upheaval_noise.get_noise(x * 0.005f, y * 0.005f) * 0.5f;
+  // 4. Detail Noise (2D) for overhangs and interest (low frequency)
+  float detail_noise = m_noise.get_terrain_noise(x, y * 0.5f, {0, 0, 0.1, 0.2, 0.1});
 
-  // Simple 2D Density: Noise - Threshold
-  return noise - threshold;
+  return base_density + detail_noise;
 }
 
 auto world_generator_t::get_province(float x, float y) -> const geologic_province_variant_t *
@@ -131,14 +141,14 @@ auto world_generator_t::get_rock_strata(float x, float y, float density, const g
 
     if (strata.gen_dir == "TopDown")
     {
-      if (y > 100 && noise_val > threshold)
+      if (y > 450 && noise_val > threshold)
       {
         return "deepbound:" + strata.block_code;
       }
     }
     else if (strata.gen_dir == "BottomUp")
     {
-      if (y < 100 && noise_val > threshold)
+      if (y < 400 && noise_val > threshold)
       {
         return "deepbound:" + strata.block_code;
       }
@@ -162,12 +172,13 @@ auto world_generator_t::generate_chunk(int chunk_x, int chunk_y) -> std::unique_
   {
     int wx = world_x_base + x;
 
-    // Sample Climate
-    float temp = m_temp_noise.get_noise((float)wx * 0.001f, 0) * 50.0f;
-    float rain = (m_rain_noise.get_noise((float)wx * 0.001f, 0) + 1.0f) * 128.0f;
+    // Smoothing: Sample climate and landform once every 32 blocks to minimize vertical artifacts.
+    float sample_x = std::floor((float)wx / 32.0f) * 32.0f;
+    float temp = m_temp_noise.get_noise(sample_x * 0.001f, 0) * 50.0f;
+    float rain = (m_rain_noise.get_noise(sample_x * 0.001f, 0) + 1.0f) * 128.0f;
 
-    current_lf = get_landform((float)wx, 0, temp, rain);
-    current_province = get_province((float)wx, 0);
+    current_lf = get_landform(sample_x, 0, temp, rain);
+    current_province = get_province(sample_x, 0);
 
     for (int y = 0; y < CHUNK_SIZE; ++y)
     {
@@ -183,8 +194,9 @@ auto world_generator_t::generate_chunk(int chunk_x, int chunk_y) -> std::unique_
       }
       else
       {
-        // AIR or WATER (Sea Level at 100)
-        if (wy < 100)
+        // AIR or WATER (Sea Level at ~440 for 1024 height - approx 43%)
+        int sea_level = 440;
+        if (wy < sea_level)
         {
           chunk->set_tile(x, y, {"deepbound:water"});
         }

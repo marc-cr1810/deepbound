@@ -38,12 +38,13 @@ int main(int argc, char *argv[])
   asset_mgr.load_all_textures_from_registry();
 
   // World Generation
-  deepbound::world_generator_t generator;
-  auto chunk = generator.generate_chunk(0, 0); // Generate chunk at 0,0
+  deepbound::World world;
 
   // Renderer
   deepbound::ChunkRenderer renderer;
   deepbound::Camera2D camera;
+  camera.set_position({0.0f, 500.0f}); // Start above sea level
+  camera.set_zoom(0.01f);              // Zoom out a bit to see more
 
   // Setup Zoom Callback
   window.set_scroll_callback([&camera](double x, double y) { camera.zoom_scroll((float)y); });
@@ -75,7 +76,13 @@ int main(int argc, char *argv[])
     glClear(GL_COLOR_BUFFER_BIT);
 
     float aspect = (float)window.get_width() / (float)window.get_height();
-    renderer.render(*chunk, camera, aspect);
+
+    // Render visible chunks
+    auto visible_chunks = world.get_visible_chunks(camera.get_position(), 4); // Range 4
+    for (auto *chunk : visible_chunks)
+    {
+      renderer.render(*chunk, camera, aspect);
+    }
 
     window.swap_buffers();
   }

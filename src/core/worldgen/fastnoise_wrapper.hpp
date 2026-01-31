@@ -3,6 +3,7 @@
 #include <FastNoise/FastNoise.h>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace deepbound
 {
@@ -26,10 +27,14 @@ public:
   // Get Cellular/Voronoi Noise (for Provinces)
   auto get_cellular(float x, float y, float frequency = 0.01f) const -> float;
 
+  // Get custom weighted terrain noise with thresholds
+  auto get_terrain_noise(float x, float y, const std::vector<double> &amplitudes, const std::vector<double> &thresholds = {}) const -> float;
+
 private:
   int m_seed;
   // We can keep a few preset generators for efficiency
   FastNoise::SmartNode<FastNoise::FractalFBm> m_simplex;
+  FastNoise::SmartNode<FastNoise::Simplex> m_simplex_base;
   FastNoise::SmartNode<FastNoise::CellularValue> m_cellular;
 };
 

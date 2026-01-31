@@ -18,13 +18,9 @@ uniform vec2 uOffset = vec2(0.0, 0.0);
 uniform float uZoom = 1.0;
 
 void main() {
-    // Transform position: (Pos - uOffset) * Zoom * AspectScale
-    // Camera pos is "world" pos, so moving camera RIGHT means shifting world LEFT.
-    // However, aPos here is already local/world unit coordinates (depending on generator).
-    // Current aPos is [-1, 1] relative to center?
-    // Let's assume uOffset handles the translation.
-    
-    vec2 pos = (aPos + uOffset) * uZoom;
+    // Transform position: (aPos - uOffset) * uZoom * uScale
+    // aPos is in world (block) units
+    vec2 pos = (aPos - uOffset) * uZoom;
     gl_Position = vec4(pos * uScale, 0.0, 1.0);
     TexCoord = aTexCoord;
 }
@@ -89,8 +85,7 @@ auto ChunkRenderer::render(const Chunk &chunk, const Camera2D &camera, float asp
   int locOffset = glGetUniformLocation(m_shader->get_renderer_id(), "uOffset");
   if (locOffset != -1)
   {
-    // Pass negative camera position to simulate camera movement
-    glUniform2f(locOffset, -camera.get_position().x, -camera.get_position().y);
+    glUniform2f(locOffset, camera.get_position().x, camera.get_position().y);
   }
 
   int locZoom = glGetUniformLocation(m_shader->get_renderer_id(), "uZoom");
@@ -99,62 +94,55 @@ auto ChunkRenderer::render(const Chunk &chunk, const Camera2D &camera, float asp
 
   glBindVertexArray(m_vao);
 
-  std::vector<float> vertices;
-
-  float tile_w = 2.0f / CHUNK_SIZE;
-  float tile_h = 2.0f / CHUNK_SIZE;
-
-  for (int y = 0; y < CHUNK_SIZE; ++y)
+  if (chunk.is_mesh_dirty())
   {
-    for (int x = 0; x < CHUNK_SIZE; ++x)
+    std::vector<float> vertices;
+    vertices.reserve(CHUNK_SIZE * CHUNK_SIZE * 24); // Optimization: Reserve space
+
+    float chunk_world_x = (float)chunk.get_x() * CHUNK_SIZE;
+    float chunk_world_y = (float)chunk.get_y() * CHUNK_SIZE;
+
+    for (int y = 0; y < CHUNK_SIZE; ++y)
     {
-      auto id = chunk.get_tile(x, y);
-      if (id.get_path() == "air")
-        continue;
-
-      // Get UVs
-      const auto *def = tile_registry_t::get().get_tile(id);
-      uv_rect_t uvs = {0, 0, 0, 0};
-
-      if (def && !def->textures.empty())
+      for (int x = 0; x < CHUNK_SIZE; ++x)
       {
-        // Try "all"
-        if (def->textures.contains("all"))
+        auto &id = chunk.get_tile(x, y);
+        if (id.get_path() == "air")
+          continue;
+
+        const auto *def = tile_registry_t::get().get_tile(id);
+        uv_rect_t uvs = {0, 0, 0, 0};
+
+        if (def && !def->textures.empty())
         {
-          uvs = asset_manager_t::get().get_texture_uvs("tiles", def->textures.at("all"));
+          if (def->textures.contains("all"))
+            uvs = asset_manager_t::get().get_texture_uvs("tiles", def->textures.at("all"));
+          else
+            uvs = asset_manager_t::get().get_texture_uvs("tiles", def->textures.begin()->second);
         }
         else
         {
-          // Fallback to first
-          uvs = asset_manager_t::get().get_texture_uvs("tiles", def->textures.begin()->second);
+          uvs = asset_manager_t::get().get_texture_uvs("tiles", id);
         }
+
+        float gx = chunk_world_x + (float)x;
+        float gy = chunk_world_y + (float)y;
+
+        // Quad (2 triangles)
+        vertices.insert(vertices.end(), {gx, gy, uvs.u1, uvs.v2, gx + 1.0f, gy, uvs.u2, uvs.v2, gx + 1.0f, gy + 1.0f, uvs.u2, uvs.v1, gx, gy, uvs.u1, uvs.v2, gx + 1.0f, gy + 1.0f, uvs.u2, uvs.v1, gx, gy + 1.0f, uvs.u1, uvs.v1});
       }
-      else
-      {
-        // Try looking up by ID directly as fallback?
-        uvs = asset_manager_t::get().get_texture_uvs("tiles", id);
-      }
-
-      float gx = -1.0f + x * tile_w;
-      float gy = -1.0f + y * tile_h;
-
-      // Quad (2 triangles)
-      // Triangle 1
-      vertices.insert(vertices.end(), {gx, gy, uvs.u1, uvs.v2});                   // Bottom Left
-      vertices.insert(vertices.end(), {gx + tile_w, gy, uvs.u2, uvs.v2});          // Bottom Right
-      vertices.insert(vertices.end(), {gx + tile_w, gy + tile_h, uvs.u2, uvs.v1}); // Top Right
-
-      // Triangle 2
-      vertices.insert(vertices.end(), {gx, gy, uvs.u1, uvs.v2});                   // Bottom Left
-      vertices.insert(vertices.end(), {gx + tile_w, gy + tile_h, uvs.u2, uvs.v1}); // Top Right
-      vertices.insert(vertices.end(), {gx, gy + tile_h, uvs.u1, uvs.v1});          // Top Left
     }
+    chunk.set_mesh(std::move(vertices));
   }
 
-  glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-  glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_DYNAMIC_DRAW);
+  const auto &mesh = chunk.get_mesh();
+  if (mesh.empty())
+    return;
 
-  glDrawArrays(GL_TRIANGLES, 0, vertices.size() / 4);
+  glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
+  glBufferData(GL_ARRAY_BUFFER, mesh.size() * sizeof(float), mesh.data(), GL_STATIC_DRAW);
+
+  glDrawArrays(GL_TRIANGLES, 0, mesh.size() / 4);
 }
 
 } // namespace deepbound
