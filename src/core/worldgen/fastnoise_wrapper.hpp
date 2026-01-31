@@ -15,6 +15,10 @@ public:
 
   // Re-seed the generator
   auto set_seed(int seed) -> void;
+  auto get_seed() const -> int
+  {
+    return m_seed;
+  }
 
   // Get 2D noise value (-1.0 to 1.0 usually)
   auto get_noise(float x, float y) const -> float;

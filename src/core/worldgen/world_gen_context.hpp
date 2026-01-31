@@ -50,6 +50,7 @@ struct landform_variant_t
 
   // Noise settings
   std::vector<double> terrain_octaves;
+  std::vector<double> terrain_octave_thresholds;
   terrain_spline_t y_key_thresholds;
 };
 

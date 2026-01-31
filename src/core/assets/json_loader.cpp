@@ -183,6 +183,9 @@ auto json_loader_t::load_worldgen(const std::string &base_dir, world_gen_context
       if (var.contains("terrainOctaves"))
         lf.terrain_octaves = var["terrainOctaves"].get<std::vector<double>>();
 
+      if (var.contains("terrainOctaveThresholds"))
+        lf.terrain_octave_thresholds = var["terrainOctaveThresholds"].get<std::vector<double>>();
+
       if (var.contains("terrainYKeyPositions"))
         lf.y_key_thresholds.keys = var["terrainYKeyPositions"].get<std::vector<float>>();
 

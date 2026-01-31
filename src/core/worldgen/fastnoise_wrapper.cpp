@@ -59,7 +59,7 @@ auto fast_noise_wrapper_t::get_terrain_noise(float x, float y, const std::vector
 {
   float total_noise = 0.0f;
   float total_amp = 0.0f;
-  float freq = 0.0002f; // Lowered base frequency for smoother hills
+  float freq = 0.001f; // Increased default frequency
 
   for (size_t i = 0; i < amplitudes.size(); ++i)
   {

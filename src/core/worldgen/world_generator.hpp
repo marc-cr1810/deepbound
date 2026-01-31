@@ -12,6 +12,19 @@
 namespace deepbound
 {
 
+struct landform_weight_t
+{
+  const landform_variant_t *landform;
+  float weight;
+};
+
+struct column_data_t
+{
+  std::vector<landform_weight_t> weights;
+  float surface_noise;
+  float upheaval;
+};
+
 class world_generator_t
 {
 public:
@@ -22,9 +35,13 @@ public:
 private:
   auto init_context() -> void;
   // returns density -1 to 1
-  auto get_density(float x, float y, const landform_variant_t *lf) -> float;
-  auto get_density_fast(float x, float y, float surface_noise, const landform_variant_t *lf) -> float;
-  auto get_landform(float x, float y, float temp, float rain) -> const landform_variant_t *;
+  auto get_density(float x, float y, float z) -> float;
+  // Optimized column density helpers
+  auto prepare_column_data(float x, float z) -> column_data_t;
+  auto get_density_from_column(float x, float y, const column_data_t &data) -> float;
+
+  auto get_landform(float x, float y) -> const landform_variant_t *;
+  auto get_landform_weights(float x, float y, std::vector<landform_weight_t> &out_weights) -> void;
 
   // New: Geologic Province
   auto get_province(float x, float y) -> const geologic_province_variant_t *;

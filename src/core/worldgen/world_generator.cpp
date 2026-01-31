@@ -32,6 +32,20 @@ world_generator_t::world_generator_t() : m_noise(0), m_temp_noise(0), m_rain_noi
   init_context();
 }
 
+// Simple integer hash
+static auto int_noise(int x, int y, int seed) -> int
+{
+  int n = x * 1619 + y * 31337 + seed * 1013;
+  n = (n << 13) ^ n;
+  return (n * (n * n * 60493 + 19990303) + 1376312589);
+}
+
+static auto get_random_float(int x, int y, int seed) -> float
+{
+  int val = int_noise(x, y, seed) & 0x7fffffff;
+  return (float)val / 2147483648.0f;
+}
+
 auto world_generator_t::init_context() -> void
 {
   if (m_initialized)
@@ -44,12 +58,16 @@ auto world_generator_t::init_context() -> void
   m_initialized = true;
 }
 
-auto world_generator_t::get_landform(float x, float y, float temp, float rain) -> const landform_variant_t *
+auto world_generator_t::get_landform_weights(float x, float y, std::vector<landform_weight_t> &out_weights) -> void
 {
-  if (m_context.landforms.empty())
-    return nullptr;
+  out_weights.clear();
 
-  float total_weight = 0.0f;
+  // Calculate climate for this position
+  float temp = m_temp_noise.get_noise(x * 0.0001f, 0) * 50.0f;
+  float rain = (m_rain_noise.get_noise(x * 0.0001f, 0) + 1.0f) * 128.0f;
+
+  // Determine candidate landforms based on climate
+  float total_candidate_weight = 0.0f;
   std::vector<const landform_variant_t *> candidates;
 
   for (const auto &lf : m_context.landforms)
@@ -59,57 +77,196 @@ auto world_generator_t::get_landform(float x, float y, float temp, float rain) -
       if (temp >= lf.min_temp && temp <= lf.max_temp && rain >= lf.min_rain && rain <= lf.max_rain)
       {
         candidates.push_back(&lf);
-        total_weight += lf.weight;
+        total_candidate_weight += lf.weight;
       }
     }
     else
     {
       candidates.push_back(&lf);
-      total_weight += lf.weight;
+      total_candidate_weight += lf.weight;
     }
   }
 
   if (candidates.empty())
-    return &m_context.landforms[0];
-
-  float noise_pick = (m_noise.get_noise(x * 0.0002f, 13) + 1.0f) * 0.5f;
-  float r = noise_pick * total_weight;
-
-  float current_weight = 0.0f;
-  for (const auto *lf : candidates)
   {
-    current_weight += lf->weight;
-    if (r <= current_weight)
-      return lf;
+    // Fallback to a default landform if no candidates match
+    if (!m_context.landforms.empty())
+    {
+      out_weights.push_back({&m_context.landforms[0], 1.0f});
+    }
+    return;
   }
 
-  return candidates.back();
+  // Landform scale is 256.
+  constexpr float scale = 256.0f;
+
+  // Apply wobble to get distorted coordinates
+  float wobble_freq = 0.002f;
+  float wobble_mag = 400.0f;
+  float wx = x + m_noise.get_noise(x * wobble_freq, y * wobble_freq) * wobble_mag;
+  float wy = y + m_noise.get_noise(y * wobble_freq, x * wobble_freq + 1000) * wobble_mag;
+
+  // We need to sample the 4 nearest grid centers for bilinear interpolation.
+  // The grid nodes are at integer coordinates of (wx/scale, wy/scale).
+  // Let u = wx/scale, v = wy/scale.
+  float u = wx / scale;
+  float v = wy / scale;
+
+  // Grid cell coordinates (top-left)
+  // To match VS "centers", we can treat integer coords as centers.
+  // Sampling at (u, v) means we are between floor(u) and floor(u)+1.
+
+  // Shift by 0.5 to align with pixel centers if needed, but let's stick to simple grid interpolation.
+  // We want to interpolate between (floor(u), floor(v)), (ceil(u), floor(v)), etc.
+
+  // Actually, VS creates a map and then interpolates. Here we compute procedurally.
+  // Centers are at (floor(u-0.5), floor(v-0.5)) etc?
+  // Let's use standard bilinear interpolation logic.
+  // Top-Left corner:
+  int x0 = (int)std::floor(u - 0.5f);
+  int y0 = (int)std::floor(v - 0.5f);
+  int x1 = x0 + 1;
+  int y1 = y0 + 1;
+
+  // Local blend factors (0.0 to 1.0)
+  float s = (u - 0.5f) - x0;
+  float t = (v - 0.5f) - y0;
+
+  // Helper to get landform for a specific grid coordinate
+  auto get_lf = [&](int gx, int gy)
+  {
+    auto seed = m_noise.get_seed();
+    float r = get_random_float(gx, gy, seed) * total_candidate_weight;
+    float current_weight = 0.0f;
+    for (const auto *lf : candidates)
+    {
+      current_weight += lf->weight;
+      if (r <= current_weight)
+        return lf;
+    }
+    return candidates.back();
+  };
+
+  // Collect 4 samples
+  const auto *lf00 = get_lf(x0, y0);
+  const auto *lf10 = get_lf(x1, y0);
+  const auto *lf01 = get_lf(x0, y1);
+  const auto *lf11 = get_lf(x1, y1);
+
+  // Calculate weights
+  // 00: (1-s)(1-t)
+  // 10: s(1-t)
+  // 01: (1-s)t
+  // 11: st
+
+  auto add_weight = [&](const landform_variant_t *lf, float w)
+  {
+    if (w <= 0.001f)
+      return; // Ignore very small weights
+    for (auto &entry : out_weights)
+    {
+      if (entry.landform == lf)
+      {
+        entry.weight += w;
+        return;
+      }
+    }
+    out_weights.push_back({lf, w});
+  };
+
+  add_weight(lf00, (1.0f - s) * (1.0f - t));
+  add_weight(lf10, s * (1.0f - t));
+  add_weight(lf01, (1.0f - s) * t);
+  add_weight(lf11, s * t);
+}
+// get_landform is kept for compatibility/debug but internal logic usually wants weights now.
+// We can implement it as returning the highest weight one from get_landform_weights.
+auto world_generator_t::get_landform(float x, float y) -> const landform_variant_t *
+{
+  std::vector<landform_weight_t> weights;
+  get_landform_weights(x, y, weights);
+  if (weights.empty())
+    return &m_context.landforms[0];
+
+  const landform_variant_t *best = weights[0].landform;
+  float best_w = weights[0].weight;
+  for (size_t i = 1; i < weights.size(); ++i)
+  {
+    if (weights[i].weight > best_w)
+    {
+      best_w = weights[i].weight;
+      best = weights[i].landform;
+    }
+  }
+  return best;
 }
 
-auto world_generator_t::get_density(float x, float y, const landform_variant_t *lf) -> float
+auto world_generator_t::prepare_column_data(float x, float z) -> column_data_t
 {
-  if (!lf)
-    return -1.0f;
+  column_data_t data;
+  get_landform_weights(x, z, data.weights);
 
-  float surface_noise = m_noise.get_terrain_noise(x, 0, lf->terrain_octaves);
-  return get_density_fast(x, y, surface_noise, lf);
+  static std::vector<double> blended_octaves;
+  static std::vector<double> blended_thresholds;
+
+  if (!data.weights.empty())
+  {
+    size_t oct_size = data.weights[0].landform->terrain_octaves.size();
+    size_t th_size = data.weights[0].landform->terrain_octave_thresholds.size();
+
+    blended_octaves.assign(oct_size, 0.0);
+    blended_thresholds.assign(th_size, 0.0);
+
+    for (const auto &w : data.weights)
+    {
+      for (size_t i = 0; i < std::min(blended_octaves.size(), w.landform->terrain_octaves.size()); ++i)
+      {
+        blended_octaves[i] += w.landform->terrain_octaves[i] * w.weight;
+      }
+      // If the landform has thresholds, blend them. Otherwise assume 0.
+      if (!w.landform->terrain_octave_thresholds.empty())
+      {
+        for (size_t i = 0; i < std::min(blended_thresholds.size(), w.landform->terrain_octave_thresholds.size()); ++i)
+        {
+          blended_thresholds[i] += w.landform->terrain_octave_thresholds[i] * w.weight;
+        }
+      }
+    }
+    data.surface_noise = m_noise.get_terrain_noise(x, z, blended_octaves, blended_thresholds);
+  }
+  else
+  {
+    data.surface_noise = 0.0f;
+  }
+
+  data.upheaval = m_upheaval_noise.get_noise(x * 0.0005f, 555) * 0.1f;
+  return data;
 }
 
-auto world_generator_t::get_density_fast(float x, float y, float surface_noise, const landform_variant_t *lf) -> float
+auto world_generator_t::get_density_from_column(float x, float y, const column_data_t &data) -> float
 {
-  if (!lf)
-    return -1.0f;
-
   float normalized_y = y / (float)m_world_height;
-  float y_offset = lf->y_key_thresholds.evaluate(normalized_y);
+  float blended_y_offset = 0.0f;
+  for (const auto &w : data.weights)
+  {
+    blended_y_offset += w.landform->y_key_thresholds.evaluate(normalized_y) * w.weight;
+  }
 
-  float base_density = (y_offset - 0.5f) * 6.0f + surface_noise;
-  float upheaval = m_noise.get_noise(x * 0.0005f, 555) * 0.1f;
-  base_density += upheaval;
-
+  float base_density = (blended_y_offset - 0.5f) * 6.0f + data.surface_noise + data.upheaval;
+  // Detail noise still needs to be evaluated per block as it varies with Y
   float detail_noise = m_noise.get_terrain_noise(x, y * 0.25f, {0, 0, 0.05, 0.05, 0.02});
 
   return base_density + detail_noise;
+}
+
+float world_generator_t::get_density(float x, float y, float z)
+{
+  if (!m_initialized)
+    return 0.0f;
+
+  // Fallback to slow full calculation
+  auto data = prepare_column_data(x, z);
+  return get_density_from_column(x, y, data);
 }
 
 auto world_generator_t::get_province(float x, float y) -> const geologic_province_variant_t *
@@ -117,11 +274,45 @@ auto world_generator_t::get_province(float x, float y) -> const geologic_provinc
   if (m_context.geologic_provinces.empty())
     return nullptr;
 
-  float noise_val = m_noise.get_noise(x * 0.001f, 99);
-  float normalized = (noise_val + 1.0f) * 0.5f;
+  // Provinces match VS: ~4096 blocks (64 * 64).
+  float wobble_freq = 0.0005f;
+  float wobble_mag = 2000.0f;
+
+  float wx = x + m_province_noise.get_noise(x * wobble_freq, y * wobble_freq) * wobble_mag;
+  float wy = y + m_province_noise.get_noise(y * wobble_freq, x * wobble_freq + 1000) * wobble_mag;
+
+  float scale = 4096.0f;
+  int px = (int)std::floor(wx / scale);
+  int py = (int)std::floor(wy / scale);
+
+  float normalized = get_random_float(px, py, m_province_noise.get_seed());
+
   size_t index = (size_t)(normalized * m_context.geologic_provinces.size());
   if (index >= m_context.geologic_provinces.size())
     index = m_context.geologic_provinces.size() - 1;
+
+  // VS uses weighted list for provinces too (NoiseGeoProvince.cs).
+  // I should check weights. But checking JSON for provinces...
+  // Assuming equal weights for now or relying on index mapping if weight sum is not used.
+  // Wait, NoiseGeoProvince uses weights. I need to iterate weights.
+  // Let's implement weighted selection for provinces.
+
+  if (!m_context.geologic_provinces.empty())
+  {
+    float total_weight = 0.0f;
+    for (const auto &p : m_context.geologic_provinces)
+      total_weight += p.weight;
+
+    float r = normalized * total_weight;
+    float current = 0.0f;
+    for (const auto &p : m_context.geologic_provinces)
+    {
+      current += p.weight;
+      if (r <= current)
+        return &p;
+    }
+    return &m_context.geologic_provinces.back();
+  }
 
   return &m_context.geologic_provinces[index];
 }
@@ -148,7 +339,7 @@ auto world_generator_t::generate_chunk(int chunk_x, int chunk_y) -> std::unique_
     float temp = m_temp_noise.get_noise(sample_x * 0.0001f, 0) * 50.0f;
     float rain = (m_rain_noise.get_noise(sample_x * 0.0001f, 0) + 1.0f) * 128.0f;
 
-    const landform_variant_t *current_lf = get_landform(sample_x, 0, temp, rain);
+    const landform_variant_t *current_lf = get_landform(sample_x, 0);
 
     // Safety check for null landform
     if (!current_lf)
@@ -162,43 +353,22 @@ auto world_generator_t::generate_chunk(int chunk_x, int chunk_y) -> std::unique_
 
     const geologic_province_variant_t *current_province = get_province(sample_x, 0);
 
+    // Optimization: Pre-calculate column data (weights and surface noise)
+    auto col_data = prepare_column_data((float)wx, 0.0f);
+
     // 2. Optimized Surface Search
     int surface_y = 0;
-    // THREAD SAFETY: Surface cache uses atomics or mutex if global, but here we just clear it periodically or it's per-generator
-    // For now, let's just re-calculate if not in cache (mutex removed for speed)
-    auto cache_it = m_surface_cache.find(wx);
-    if (cache_it != m_surface_cache.end())
+    int start_y = std::min(m_world_height - 1, std::max(0, prev_surface_y + 32));
+
+    // Use full get_density for surface find. It's slower but correct with blending.
+    // Optimization: we could implement a "get_approximate_surface" but for now correct > fast.
+    for (int sy = start_y; sy >= 0; --sy)
     {
-      surface_y = cache_it->second;
-    }
-    else
-    {
-      float h_noise = 0.0f;
-      float y_offset = 0.5f;
-
-      if (current_lf)
+      if (get_density_from_column((float)wx, (float)sy, col_data) > 0.0f)
       {
-        h_noise = m_noise.get_terrain_noise((float)wx, 0, current_lf->terrain_octaves);
+        surface_y = sy;
+        break;
       }
-
-      float upheaval = m_noise.get_noise((float)wx * 0.0005f, 555) * 0.1f;
-
-      int start_y = std::min(m_world_height - 1, std::max(0, prev_surface_y + 32));
-      for (int sy = start_y; sy >= 0; --sy)
-      {
-        float normalized_y = (float)sy / (float)m_world_height;
-        if (current_lf)
-        {
-          y_offset = current_lf->y_key_thresholds.evaluate(normalized_y);
-        }
-
-        if ((y_offset - 0.5f) * 6.0f + h_noise + upheaval > 0.0f)
-        {
-          surface_y = sy;
-          break;
-        }
-      }
-      m_surface_cache[wx] = surface_y;
     }
     prev_surface_y = surface_y;
 
@@ -255,10 +425,7 @@ auto world_generator_t::generate_chunk(int chunk_x, int chunk_y) -> std::unique_
     }
 
     // 4. Column block filling
-    float h_noise = 0.0f;
-    if (current_lf)
-      h_noise = m_noise.get_terrain_noise((float)wx, 0, current_lf->terrain_octaves);
-    float upheaval = m_noise.get_noise((float)wx * 0.0005f, 555) * 0.1f;
+    // No longer need optimized h_noise precalc since get_density handles it properly with blending.
 
     for (int y = 0; y < CHUNK_SIZE; ++y)
     {
@@ -270,7 +437,7 @@ auto world_generator_t::generate_chunk(int chunk_x, int chunk_y) -> std::unique_
         continue;
       }
 
-      float density = get_density_fast((float)wx, (float)wy, h_noise, current_lf);
+      float density = get_density_from_column((float)wx, (float)wy, col_data);
 
       if (density > 0.0f)
       {
