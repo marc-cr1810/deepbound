@@ -5,12 +5,30 @@
 #include <cmath>
 #include <algorithm>
 #include <map>
+#include <random>
 
 namespace deepbound
 {
 
-world_generator_t::world_generator_t() : m_noise(1337), m_temp_noise(123), m_rain_noise(456), m_province_noise(789), m_strata_noise(4242), m_upheaval_noise(999)
+world_generator_t::world_generator_t() : m_noise(0), m_temp_noise(0), m_rain_noise(0), m_province_noise(0), m_strata_noise(0), m_upheaval_noise(0)
 {
+  std::random_device rd;
+  std::mt19937 gen(rd());
+  std::uniform_int_distribution<> dis(1, 1000000); // 1M range is sufficient for FastNoise seeds usually
+
+  int master_seed = dis(gen);
+  std::cout << "WorldGen Seed: " << master_seed << std::endl;
+
+  // Derive other seeds deterministically from the master seed, or randomly
+  // It's often better to derive them so one seed reproduces everything.
+  // Simple LCG or just offset
+  m_noise.set_seed(master_seed);
+  m_temp_noise.set_seed(master_seed + 123);
+  m_rain_noise.set_seed(master_seed + 456);
+  m_province_noise.set_seed(master_seed + 789);
+  m_strata_noise.set_seed(master_seed + 4242);
+  m_upheaval_noise.set_seed(master_seed + 999);
+
   init_context();
 }
 
