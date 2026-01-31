@@ -47,6 +47,14 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(glm)
 
+# FastNoise2
+FetchContent_Declare(
+  FastNoise2
+  GIT_REPOSITORY https://github.com/Auburn/FastNoise2.git
+  GIT_TAG v0.10.0-alpha
+)
+FetchContent_MakeAvailable(FastNoise2)
+
 # Core Library
 add_library(deepbound_core STATIC)
 target_include_directories(deepbound_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -69,7 +77,7 @@ file(GLOB_RECURSE CORE_SOURCES src/core/*.cpp src/core/*.hpp)
 
 target_sources(deepbound_core PRIVATE ${CORE_SOURCES})
 
-target_link_libraries(deepbound_core PUBLIC glfw nlohmann_json::nlohmann_json glad glm::glm)
+target_link_libraries(deepbound_core PUBLIC glfw nlohmann_json::nlohmann_json glad glm::glm FastNoise2)
 target_compile_definitions(deepbound_core PUBLIC GLFW_INCLUDE_NONE)
 target_include_directories(deepbound_core PUBLIC ${stb_SOURCE_DIR})
 

@@ -71,8 +71,8 @@ auto asset_manager_t::load_all_textures_from_registry() -> void
     for (const auto &[key, tex_id] : def.textures)
     {
       // Construct file path
-      // domain:path -> assets/domain/textures/path.png
-      std::string path = "assets/" + tex_id.get_namespace() + "/textures/" + tex_id.get_path() + ".png";
+      // Constructed path: assets/textures/path.png (Flattened structure)
+      std::string path = "assets/textures/" + tex_id.get_path() + ".png";
 
       register_texture("tiles", tex_id, path);
     }

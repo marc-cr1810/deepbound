@@ -19,7 +19,7 @@
     "mapColorCode": "gray"
   },
   "textures": {
-    "all": "block/rock/{type}"
+    "all": "tile/rock/{type}"
   },
   "resistance": 8,
   "drawtype": "cube"

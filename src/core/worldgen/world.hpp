@@ -25,7 +25,7 @@ private:
   auto get_chunk(int x, int y) -> Chunk *;
 
   std::map<std::pair<int, int>, std::unique_ptr<Chunk>> m_chunks;
-  WorldGenerator m_generator;
+  world_generator_t m_generator;
 };
 
 } // namespace deepbound

@@ -1,0 +1,16 @@
+{
+  "code": "water",
+  "class": "BlockLiquid",
+  "attributes": {
+    "sidesolid": {
+      "all": false
+    },
+    "mapColorCode": "blue",
+    "isLiquid": true
+  },
+  "textures": {
+    "all": "tile/liquid/water"
+  },
+  "resistance": 0.5,
+  "drawtype": "liquid"
+}

@@ -19,7 +19,7 @@
     "mapColorCode": "brown"
   },
   "textures": {
-    "all": "block/soil/fert{fertility}"
+    "all": "tile/soil/fert{fertility}"
   },
   "resistance": 1.8,
   "drawtype": "cube"

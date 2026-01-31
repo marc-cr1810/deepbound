@@ -8,8 +8,6 @@
 #include "core/worldgen/landform.hpp"
 #include "core/worldgen/rock_strata.hpp"
 #include "core/graphics/window.hpp"
-#include "core/worldgen/landform.hpp"
-#include "core/worldgen/rock_strata.hpp"
 #include "core/worldgen/world_generator.hpp"
 #include "core/worldgen/world.hpp"
 #include <iostream>
@@ -35,12 +33,12 @@ int main(int argc, char *argv[])
 
   // Load Content
   std::cout << "Loading Content..." << std::endl;
-  deepbound::json_loader_t::load_tiles_from_directory("assets/deepbound/tiles");
-  deepbound::json_loader_t::load_strata_from_file("assets/deepbound/worldgen/rockstrata.json");
+  deepbound::json_loader_t::load_tiles_from_directory("assets/tiles");
+  // World generation data is loaded from assets/worldgen/ within the world_generator_t constructor.
   asset_mgr.load_all_textures_from_registry();
 
   // World Generation
-  deepbound::WorldGenerator generator;
+  deepbound::world_generator_t generator;
   auto chunk = generator.generate_chunk(0, 0); // Generate chunk at 0,0
 
   // Renderer
