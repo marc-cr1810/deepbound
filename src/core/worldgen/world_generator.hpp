@@ -88,12 +88,6 @@ private:
   std::array<column_cache_shard_t, 32> m_column_caches;
 
   // Reusable buffers for per-column generation
-  std::vector<strata_range_t> m_column_ranges_buffer;
-  // Use vector for small N linear search instead of map allocation
-  std::vector<std::pair<std::string, float>> m_rock_group_cur_buffer;
-
-  // Buffer for landform candidates to avoid vector reallocation
-  std::vector<const landform_variant_t *> m_landform_candidates_buffer;
 
   // Climate noise
   fast_noise_wrapper_t m_temp_noise;

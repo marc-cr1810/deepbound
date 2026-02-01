@@ -11,17 +11,36 @@ world_t::world_t()
 
 auto world_t::get_chunk(int chunk_x, int chunk_y) -> chunk_t *
 {
-  auto it = m_chunks.find({chunk_x, chunk_y});
-  if (it != m_chunks.end())
   {
-    return it->second.get();
+    std::lock_guard<std::mutex> lock(m_chunks_mutex);
+    auto it = m_chunks.find({chunk_x, chunk_y});
+    if (it != m_chunks.end())
+    {
+      return it->second.get();
+    }
+
+    if (m_generating.count({chunk_x, chunk_y}))
+    {
+      return nullptr;
+    }
+
+    // Mark as generating
+    m_generating.insert({chunk_x, chunk_y});
   }
 
-  // Generate if not exists
-  auto chunk = m_generator.generate_chunk(chunk_x, chunk_y);
-  chunk_t *ptr = chunk.get();
-  m_chunks[{chunk_x, chunk_y}] = std::move(chunk);
-  return ptr;
+  // Launch async generation
+  std::thread(
+      [this, chunk_x, chunk_y]()
+      {
+        auto chunk = m_generator.generate_chunk(chunk_x, chunk_y);
+
+        std::lock_guard<std::mutex> lock(m_chunks_mutex);
+        m_chunks[{chunk_x, chunk_y}] = std::move(chunk);
+        m_generating.erase({chunk_x, chunk_y});
+      })
+      .detach();
+
+  return nullptr;
 }
 
 auto world_t::get_tile_at(float world_x, float world_y) -> std::optional<resource_id_t>
@@ -72,7 +91,11 @@ auto world_t::get_visible_chunks(const glm::vec2 &camera_pos, int range) -> std:
   {
     for (int x = -range; x <= range; ++x)
     {
-      visible.push_back(get_chunk(center_chunk_x + x, center_chunk_y + y));
+      chunk_t *chunk = get_chunk(center_chunk_x + x, center_chunk_y + y);
+      if (chunk)
+      {
+        visible.push_back(chunk);
+      }
     }
   }
   return visible;

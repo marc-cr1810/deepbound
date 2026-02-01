@@ -6,6 +6,9 @@
 #include <memory>
 #include <vector>
 #include <optional>
+#include <mutex>
+#include <thread>
+#include <set>
 #include <glm/glm.hpp>
 
 namespace deepbound
@@ -28,6 +31,11 @@ private:
   auto get_chunk(int x, int y) -> chunk_t *;
 
   std::map<std::pair<int, int>, std::unique_ptr<chunk_t>> m_chunks;
+
+  // Async Generation
+  std::mutex m_chunks_mutex;
+  std::set<std::pair<int, int>> m_generating;
+
   world_generator_t m_generator;
 };
 

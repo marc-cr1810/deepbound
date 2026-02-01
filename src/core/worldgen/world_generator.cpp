@@ -1,6 +1,7 @@
 #include "core/worldgen/world_generator.hpp"
 #include "core/assets/json_loader.hpp"
 #include "core/common/resource_id.hpp"
+#include <string_view>
 #include <iostream>
 #include <cmath>
 #include <algorithm>
@@ -489,7 +490,7 @@ auto world_generator_t::generate_chunk(int chunk_x, int chunk_y) -> std::unique_
 
       if (density > 0.0f)
       {
-        std::string rock_type = "deepbound:rock-obsidian";
+        std::string_view rock_type = "deepbound:rock-obsidian";
 
         float b_noise = m_noise.get_noise((float)wx * 0.02f, (float)wy * 0.02f) * 2.0f;
 
@@ -506,10 +507,15 @@ auto world_generator_t::generate_chunk(int chunk_x, int chunk_y) -> std::unique_
 
         if (!found && !col_info_ptr->last_bottom_up_code.empty())
         {
-          rock_type = "deepbound:" + col_info_ptr->last_bottom_up_code;
+          // This case requires composition, so we can't avoid string creation easily unless we change range.code storage
+          // But since "deepbound:" prefix is constant, we could optimize storage in ranges.
+          // For now, let's keep the fallback but optimize the main path.
+          chunk->set_tile(x, y, {"deepbound:" + col_info_ptr->last_bottom_up_code});
         }
-
-        chunk->set_tile(x, y, {rock_type}); // Still allocs temp string for rock types (less common than Air/Water)
+        else
+        {
+          chunk->set_tile(x, y, {std::string(rock_type)});
+        }
       }
       else
       {
