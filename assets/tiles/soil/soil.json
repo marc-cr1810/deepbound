@@ -10,6 +10,15 @@
         "medium",
         "high"
       ]
+    },
+    {
+      "code": "grasscoverage",
+      "states": [
+        "none",
+        "normal",
+        "sparse",
+        "verysparse"
+      ]
     }
   ],
   "attributes": {
@@ -19,8 +28,16 @@
     "mapColorCode": "brown"
   },
   "textures": {
-    "all": "tile/soil/fert{fertility}"
+    "all": "tile/soil/fert{fertility}",
+    "specialSecondTexture": "tile/plant/grasscoverage/{grasscoverage}"
   },
   "resistance": 1.8,
-  "drawtype": "cube"
+  "drawtypeByType": {
+    "*-none": "cube",
+    "*": "TopSoil"
+  },
+  "climateColorMapByType": {
+    "*-none": null,
+    "*": "climatePlantTint"
+  }
 }

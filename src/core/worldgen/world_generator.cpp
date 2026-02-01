@@ -467,6 +467,23 @@ auto world_generator_t::generate_chunk(int chunk_x, int chunk_y) -> std::unique_
       }
       col_info_ptr->last_bottom_up_code = last_bu_code;
 
+      // Calculate and store Climate for this column
+      {
+        float temp = m_temp_noise.get_noise((float)wx * 0.0001f, 0) * 50.0f;
+        float rain = (m_rain_noise.get_noise((float)wx * 0.0001f, 0) + 1.0f) * 128.0f;
+
+        // Dither
+        uint32_t h_dither = (uint32_t)wx * 0x9E3779B9;
+        float rain_jitter = ((h_dither & 0xFF) / 255.0f - 0.5f) * 20.0f;
+        float temp_jitter = (((h_dither >> 8) & 0xFF) / 255.0f - 0.5f) * 5.0f;
+
+        temp += temp_jitter;
+        rain += rain_jitter;
+
+        col_info_ptr->temp = temp;
+        col_info_ptr->rain = rain;
+      }
+
       {
         std::lock_guard<std::mutex> lock(shard.mutex);
         shard.map[wx] = col_info_ptr;
@@ -483,8 +500,11 @@ auto world_generator_t::generate_chunk(int chunk_x, int chunk_y) -> std::unique_
       if (wy >= m_world_height)
       {
         chunk->set_tile(x, y, AIR_ID);
+        chunk->set_climate(x, y, col_info_ptr->temp, col_info_ptr->rain);
         continue;
       }
+
+      chunk->set_climate(x, y, col_info_ptr->temp, col_info_ptr->rain);
 
       float density = get_density_from_column((float)wx, (float)wy, col_info_ptr->data);
 
@@ -551,62 +571,102 @@ auto world_generator_t::apply_column_surface(chunk_t *chunk, int local_x, int wo
   // We cannot check 'existing' block at surface here if surface is in another chunk.
   // We rely on the replacement loop below to check solidity.
 
-  // Get Climate
-  float temp = m_temp_noise.get_noise((float)world_x * 0.0001f, 0) * 50.0f;
-  float rain = (m_rain_noise.get_noise((float)world_x * 0.0001f, 0) + 1.0f) * 128.0f;
+  // Get Climate from cached column info (already dithered)
+  float temp = col_info.temp;
+  float rain = col_info.rain;
 
-  // Dither climate to prevent hard biome edges
-  // Using a simple hash of world_x to add high-frequency noise
-  uint32_t h_dither = (uint32_t)world_x * 0x9E3779B9;
-  float rain_jitter = ((h_dither & 0xFF) / 255.0f - 0.5f) * 20.0f;       // +/- 10.0 rain jitter
-  float temp_jitter = (((h_dither >> 8) & 0xFF) / 255.0f - 0.5f) * 5.0f; // +/- 2.5 temp jitter
+  // Store climate in chunk for rendering
+  // Since climate is per column (X), we set it for all Y in this column?
+  // Or does `m_climate` need to be 1D per chunk?
+  // The struct was `[x][y]`.
+  // In a side view game, blocks at different Y might have different tints? (e.g. freezing at height).
+  // For now, let's just replicate the column value across Y or set it specifically where we have blocks.
+  // Actually, to support gradients, let's store it per block (or per column if uniform).
+  // The `chunk_t` has `[CHUNK_SIZE][CHUNK_SIZE]`, so it supports per-block.
+  // We'll set it for the 'surface_y' block here, but we should probably set it for the whole column or at least the blocks we touch.
+  // Let's set it in the loop where we iterate blocks.
 
-  temp += temp_jitter;
-  rain += rain_jitter;
+  // Actually, let's just set the generic column climate for this local_x for now,
+  // as we might not visit every Y in this function.
+  // But wait, `chunk_renderer` iterates all X,Y. It needs data for every block.
+  // So we probably need to fill the whole chunk's climate data in `generate_chunk`.
+  // Let's move the filling to `generate_chunk` step 4 or 5.
+  // BUT `apply_column_surface` calculates the *dithered* climate which is nice.
+  // We should reuse that logic.
+
+  // Let's just update `apply_column_surface` to set specific block climate when placing tiles?
+  // AND `generate_chunk` to set default climate?
+  // Or better: In `generate_chunk`, loop X and Y, calculate climate, and set it.
+  // This is duplication of logic but cleaner/safer than partial setting.
+  // Let's stick to setting it here for the blocks we touch, and add a pass in generate_chunk for general blocks.
+
+  // For now, to keep it simple and working for the surface blocks:
+  // We'll just insert `chunk->set_climate(local_x, local_y, temp, rain)`
+  // But wait, local_y is calculated later.
 
   // Find best layer
-  const block_layer_variant_t *best_layer = nullptr;
+
+  // Accumulate layers
+  // Iterate all layers in order. usage: L1, L2, L3...
+  // In our config, they are just a list. We will assume file order dictates deposition order (Top Down).
+
+  int current_y_local = local_y; // Start at surface and go down
+
   for (const auto &layer : m_context.block_layers)
   {
+    // Check conditions
     if (temp >= layer.min_temp && temp <= layer.max_temp && rain >= layer.min_rain && rain <= layer.max_rain)
     {
-      best_layer = &layer;
-      // First match wins (order matters in config)
-      break;
-    }
-  }
-
-  if (best_layer)
-  {
-    int thickness = best_layer->min_thickness;
-    if (best_layer->max_thickness > best_layer->min_thickness)
-    {
-      // Hash-based pseudo-random for thickness to avoid patterns
-      uint32_t h = (uint32_t)world_x * 374761393U + (uint32_t)surface_y * 668265263U;
-      h = (h ^ (h >> 13)) * 1274126177U;
-      thickness += (h ^ (h >> 16)) % (best_layer->max_thickness - best_layer->min_thickness + 1);
-    }
-
-    for (int i = 0; i < thickness; ++i)
-    {
-      int current_y_local = local_y - i;
-
-      // If the block is above this chunk, skip
-      if (current_y_local >= CHUNK_SIZE)
-        continue;
-
-      // If the block is below this chunk, stop (going down)
-      if (current_y_local < 0)
-        break;
-
-      // Only replace if it's currently a valid rock
-      // For now, assume anything not AIR/WATER is rock.
-      if (chunk->get_tile(local_x, current_y_local) != AIR_ID && chunk->get_tile(local_x, current_y_local) != WATER_ID)
+      // Apply this layer
+      int thickness = layer.min_thickness;
+      if (layer.max_thickness > layer.min_thickness)
       {
-        chunk->set_tile(local_x, current_y_local, {best_layer->block_code});
+        // Hash-based pseudo-random for thickness
+        uint32_t h = (uint32_t)world_x * 374761393U + (uint32_t)surface_y * 668265263U + (uint32_t)layer.block_code.length();
+        h = (h ^ (h >> 13)) * 1274126177U;
+        thickness += (h ^ (h >> 16)) % (layer.max_thickness - layer.min_thickness + 1);
+      }
+
+      for (int i = 0; i < thickness; ++i)
+      {
+        // If the block is above this chunk, skip (but continue loop to track depth)
+        // If the block is below this chunk, stop for this layer? No, we might cross chunk boundaries.
+        // But purely local logic:
+
+        if (current_y_local >= CHUNK_SIZE)
+        {
+          current_y_local--;
+          continue;
+        }
+
+        if (current_y_local < 0)
+        {
+          current_y_local--;
+          continue; // Passed bottom of chunk
+        }
+
+        // Only replace if it's currently a valid rock (or previously placed property?)
+        // We overwrite whatever is there (rock) with this layer.
+        auto current_tile = chunk->get_tile(local_x, current_y_local);
+        if (current_tile != AIR_ID && current_tile != WATER_ID)
+        {
+          chunk->set_tile(local_x, current_y_local, {layer.block_code});
+        }
+
+        current_y_local--;
       }
     }
   }
+
+  // Layer application moved inside the loop above can be verified there.
+  // existing code was: if (best_layer) { ... }
+  // We effectively replaced lines 610-619 (finding) and need to remove 621-651 (applying).
+  // The previous edit replaced the Finder with the Applier.
+  // So now I just need to Clean up the trailing lines?
+  // Wait, my previous edit Replaced lines 609-619.
+  // The code at 621 (if (best_layer)...) is likely still there and now invalid/unreachable/confused.
+  // I should have replaced the WHOLE block.
+  // I will now delete lines 621-651.
 }
 
 } // namespace deepbound

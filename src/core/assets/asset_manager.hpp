@@ -37,11 +37,34 @@ public:
   // Loads all textures referenced by registered content
   auto load_all_textures_from_registry() -> void;
 
+  // Loads or retrieves a standalone texture
+  auto get_texture(const resource_id_t &id) -> const texture_t &;
+
+  struct color_map_info_t
+  {
+    resource_id_t id;
+    bool load_into_atlas = false;
+  };
+
+  // Color Maps
+  auto register_color_map(const std::string &code, const resource_id_t &texture_id, bool load_into_atlas) -> void;
+  auto get_color_map_texture_id(const std::string &code) -> resource_id_t; // Returns empty/invalid if not found
+  auto get_color_maps() const -> const std::map<std::string, color_map_info_t> &
+  {
+    return m_color_maps;
+  }
+
 private:
   asset_manager_t() = default;
 
   std::map<std::string, std::unique_ptr<texture_atlas_t>> m_atlases;
   resource_id_t m_fallback_id = resource_id_t("deepbound:unknown");
+
+  // Standalone textures (not in atlases)
+  std::map<resource_id_t, std::unique_ptr<texture_t>> m_standalone_textures;
+
+  // Color Map Registry
+  std::map<std::string, color_map_info_t> m_color_maps;
 };
 
 } // namespace deepbound

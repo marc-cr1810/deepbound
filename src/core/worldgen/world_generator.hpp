@@ -78,6 +78,8 @@ private:
     int surface_y;
     std::vector<strata_range_t> strata_ranges;
     std::string last_bottom_up_code;
+    float temp = 0.0f;
+    float rain = 0.0f;
   };
 
   // Helper method for surface layers

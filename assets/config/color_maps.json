@@ -1,0 +1,42 @@
+[
+    {
+        "code": "climatePlantTint",
+        "texture": {
+            "base": "environment/plant_tint"
+        },
+        "padding": 4,
+        "loadIntoTileTextureAtlas": true
+    },
+    {
+        "code": "climateWaterTint",
+        "texture": {
+            "base": "environment/water_tint"
+        },
+        "padding": 4,
+        "loadIntoTileTextureAtlas": true
+    },
+    {
+        "code": "climateDarkerPlantTint",
+        "texture": {
+            "base": "environment/plant_tint_darker"
+        },
+        "padding": 4,
+        "loadIntoTileTextureAtlas": true
+    },
+    {
+        "code": "climateLightPlantTint",
+        "texture": {
+            "base": "environment/plant_tint_light"
+        },
+        "padding": 4,
+        "loadIntoTileTextureAtlas": true
+    },
+    {
+        "code": "climateLighterPlantTint",
+        "texture": {
+            "base": "environment/plant_tint_lighter"
+        },
+        "padding": 4,
+        "loadIntoTileTextureAtlas": true
+    }
+]

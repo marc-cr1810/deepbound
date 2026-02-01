@@ -15,6 +15,7 @@ class json_loader_t
 public:
   static auto load_tiles_from_directory(const std::string &directory_path) -> void;
   static auto load_strata_from_file(const std::string &file_path) -> void;
+  static auto load_color_maps(const std::string &file_path) -> void;
   static auto load_worldgen(const std::string &base_dir, world_gen_context_t &context) -> void;
 
 private:

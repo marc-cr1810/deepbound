@@ -1,48 +1,59 @@
 {
   "blocklayers": [
     {
-      "code": "soil-deep",
-      "name": "Deep Soil",
-      "minTemp": -15,
-      "maxTemp": 40,
-      "minRain": 50,
-      "maxRain": 255,
-      "blockCode": "soil-medium",
-      "minThickness": 3,
-      "maxThickness": 5
-    },
-    {
-      "code": "soil-standard",
-      "name": "Standard Soil",
+      "code": "l1-grass",
+      "name": "L1 Grass Surface",
       "minTemp": -10,
       "maxTemp": 40,
       "minRain": 30,
       "maxRain": 255,
-      "blockCode": "soil-medium",
+      "blockCode": "soil-medium-normal",
       "minThickness": 1,
-      "maxThickness": 3
+      "maxThickness": 1
     },
     {
-      "code": "desert-sand",
-      "name": "Desert Sand",
+      "code": "l1-desert",
+      "name": "L1 Desert Surface",
       "minTemp": 25,
       "maxTemp": 50,
       "minRain": 0,
       "maxRain": 20,
       "blockCode": "sand-sandstone",
       "minThickness": 3,
-      "maxThickness": 6
+      "maxThickness": 4
     },
     {
-      "code": "cold-gravel",
-      "name": "Cold Gravel",
+      "code": "l1-cold",
+      "name": "L1 Cold Surface",
       "minTemp": -50,
       "maxTemp": -5,
       "minRain": 0,
       "maxRain": 255,
       "blockCode": "gravel-andesite",
+      "minThickness": 1,
+      "maxThickness": 2
+    },
+    {
+      "code": "l2-subsoil-standard",
+      "name": "L2 Subsoil",
+      "minTemp": -10,
+      "maxTemp": 40,
+      "minRain": 30,
+      "maxRain": 255,
+      "blockCode": "soil-medium-none",
       "minThickness": 2,
-      "maxThickness": 4
+      "maxThickness": 3
+    },
+    {
+      "code": "l3-subsoil-deep",
+      "name": "L3 Deep Subsoil",
+      "minTemp": -15,
+      "maxTemp": 40,
+      "minRain": 50,
+      "maxRain": 255,
+      "blockCode": "soil-medium-none",
+      "minThickness": 2,
+      "maxThickness": 3
     }
   ]
 }

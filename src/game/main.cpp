@@ -53,6 +53,7 @@ int main(int argc, char *argv[])
   // Load Content
   std::cout << "Loading Content..." << std::endl;
   deepbound::json_loader_t::load_tiles_from_directory("assets/tiles");
+  deepbound::json_loader_t::load_color_maps("assets/config/color_maps.json");
   // World generation data is loaded from assets/worldgen/ within the world_generator_t constructor.
   asset_mgr.load_all_textures_from_registry();
 

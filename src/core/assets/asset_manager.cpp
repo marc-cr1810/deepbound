@@ -73,10 +73,74 @@ auto asset_manager_t::load_all_textures_from_registry() -> void
       // Construct file path
       // Constructed path: assets/textures/path.png (Flattened structure)
       std::string path = "assets/textures/" + tex_id.get_path() + ".png";
-
       register_texture("tiles", tex_id, path);
     }
+
+    // Load special second texture if present
+    if (!def.special_second_texture.get_path().empty() && def.special_second_texture.get_path() != "deepbound:unknown")
+    {
+      std::string path = "assets/textures/" + def.special_second_texture.get_path() + ".png";
+      register_texture("tiles", def.special_second_texture, path);
+    }
   }
+
+  // Load Tint Maps into Atlas if requested
+  for (const auto &[code, info] : m_color_maps)
+  {
+    if (info.load_into_atlas)
+    {
+      std::string path = "assets/" + info.id.get_path() + ".png";
+      register_texture("tiles", info.id, path);
+    }
+  }
+}
+
+auto asset_manager_t::get_texture(const resource_id_t &id) -> const texture_t &
+{
+  auto it = m_standalone_textures.find(id);
+  if (it != m_standalone_textures.end())
+  {
+    return *it->second;
+  }
+
+  // Attempt to load
+  std::string path = "assets/" + id.get_path();
+
+  try
+  {
+    auto new_tex = std::make_unique<texture_t>();
+    if (!new_tex->load_from_file(path))
+    {
+      // Try appending .png
+      std::string path_png = path + ".png";
+      if (!new_tex->load_from_file(path_png))
+      {
+        throw std::runtime_error("Failed to load texture at " + path + " or " + path_png);
+      }
+    }
+    auto &ref = *new_tex;
+    m_standalone_textures[id] = std::move(new_tex);
+    return ref;
+  }
+  catch (const std::exception &e)
+  {
+    std::cerr << "Truly failed to load texture " << id.get_path() << ": " << e.what() << std::endl;
+    throw;
+  }
+}
+
+auto asset_manager_t::register_color_map(const std::string &code, const resource_id_t &texture_id, bool load_into_atlas) -> void
+{
+  m_color_maps[code] = {texture_id, load_into_atlas};
+}
+
+auto asset_manager_t::get_color_map_texture_id(const std::string &code) -> resource_id_t
+{
+  if (m_color_maps.count(code))
+  {
+    return m_color_maps.at(code).id;
+  }
+  return resource_id_t("deepbound:missing_color_map");
 }
 
 } // namespace deepbound
