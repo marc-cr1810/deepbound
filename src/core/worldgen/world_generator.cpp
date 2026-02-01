@@ -525,9 +525,88 @@ auto world_generator_t::generate_chunk(int chunk_x, int chunk_y) -> std::unique_
           chunk->set_tile(x, y, AIR_ID);
       }
     }
+
+    // 5. Surface Layers
+    apply_column_surface(chunk.get(), x, wx, world_y_base, *col_info_ptr);
   }
 
   return chunk;
+}
+
+auto world_generator_t::apply_column_surface(chunk_t *chunk, int local_x, int world_x, int world_y_base, const cached_column_info_t &col_info) -> void
+{
+  int surface_y = col_info.surface_y;
+
+  // Check if surface is below this chunk (soil goes down, so no effect)
+  if (surface_y < world_y_base)
+  {
+    return;
+  }
+
+  // Note: We do NOT abort if surface_y >= world_y_base + CHUNK_SIZE
+  // because the soil layer might extend downwards into this chunk.
+
+  int local_y = surface_y - world_y_base;
+
+  // We cannot check 'existing' block at surface here if surface is in another chunk.
+  // We rely on the replacement loop below to check solidity.
+
+  // Get Climate
+  float temp = m_temp_noise.get_noise((float)world_x * 0.0001f, 0) * 50.0f;
+  float rain = (m_rain_noise.get_noise((float)world_x * 0.0001f, 0) + 1.0f) * 128.0f;
+
+  // Dither climate to prevent hard biome edges
+  // Using a simple hash of world_x to add high-frequency noise
+  uint32_t h_dither = (uint32_t)world_x * 0x9E3779B9;
+  float rain_jitter = ((h_dither & 0xFF) / 255.0f - 0.5f) * 20.0f;       // +/- 10.0 rain jitter
+  float temp_jitter = (((h_dither >> 8) & 0xFF) / 255.0f - 0.5f) * 5.0f; // +/- 2.5 temp jitter
+
+  temp += temp_jitter;
+  rain += rain_jitter;
+
+  // Find best layer
+  const block_layer_variant_t *best_layer = nullptr;
+  for (const auto &layer : m_context.block_layers)
+  {
+    if (temp >= layer.min_temp && temp <= layer.max_temp && rain >= layer.min_rain && rain <= layer.max_rain)
+    {
+      best_layer = &layer;
+      // First match wins (order matters in config)
+      break;
+    }
+  }
+
+  if (best_layer)
+  {
+    int thickness = best_layer->min_thickness;
+    if (best_layer->max_thickness > best_layer->min_thickness)
+    {
+      // Hash-based pseudo-random for thickness to avoid patterns
+      uint32_t h = (uint32_t)world_x * 374761393U + (uint32_t)surface_y * 668265263U;
+      h = (h ^ (h >> 13)) * 1274126177U;
+      thickness += (h ^ (h >> 16)) % (best_layer->max_thickness - best_layer->min_thickness + 1);
+    }
+
+    for (int i = 0; i < thickness; ++i)
+    {
+      int current_y_local = local_y - i;
+
+      // If the block is above this chunk, skip
+      if (current_y_local >= CHUNK_SIZE)
+        continue;
+
+      // If the block is below this chunk, stop (going down)
+      if (current_y_local < 0)
+        break;
+
+      // Only replace if it's currently a valid rock
+      // For now, assume anything not AIR/WATER is rock.
+      if (chunk->get_tile(local_x, current_y_local) != AIR_ID && chunk->get_tile(local_x, current_y_local) != WATER_ID)
+      {
+        chunk->set_tile(local_x, current_y_local, {best_layer->block_code});
+      }
+    }
+  }
 }
 
 } // namespace deepbound

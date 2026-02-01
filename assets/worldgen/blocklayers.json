@@ -1,0 +1,48 @@
+{
+  "blocklayers": [
+    {
+      "code": "soil-deep",
+      "name": "Deep Soil",
+      "minTemp": -15,
+      "maxTemp": 40,
+      "minRain": 50,
+      "maxRain": 255,
+      "blockCode": "soil-medium",
+      "minThickness": 3,
+      "maxThickness": 5
+    },
+    {
+      "code": "soil-standard",
+      "name": "Standard Soil",
+      "minTemp": -10,
+      "maxTemp": 40,
+      "minRain": 30,
+      "maxRain": 255,
+      "blockCode": "soil-medium",
+      "minThickness": 1,
+      "maxThickness": 3
+    },
+    {
+      "code": "desert-sand",
+      "name": "Desert Sand",
+      "minTemp": 25,
+      "maxTemp": 50,
+      "minRain": 0,
+      "maxRain": 20,
+      "blockCode": "sand-sandstone",
+      "minThickness": 3,
+      "maxThickness": 6
+    },
+    {
+      "code": "cold-gravel",
+      "name": "Cold Gravel",
+      "minTemp": -50,
+      "maxTemp": -5,
+      "minRain": 0,
+      "maxRain": 255,
+      "blockCode": "gravel-andesite",
+      "minThickness": 2,
+      "maxThickness": 4
+    }
+  ]
+}

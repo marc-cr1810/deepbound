@@ -5,7 +5,7 @@
     {
       "code": "fertility",
       "states": [
-        "none",
+        "verylow",
         "low",
         "medium",
         "high"

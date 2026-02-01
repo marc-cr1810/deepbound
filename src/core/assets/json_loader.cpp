@@ -238,6 +238,31 @@ auto json_loader_t::load_worldgen(const std::string &base_dir, world_gen_context
       context.geologic_provinces.push_back(gp);
     }
   }
+
+  // Load Block Layers
+  nlohmann::json j_layers = load_file(base_dir + "/blocklayers.json");
+  if (j_layers.contains("blocklayers"))
+  {
+    for (const auto &var : j_layers["blocklayers"])
+    {
+      block_layer_variant_t bl;
+      bl.code = var.value("code", "unknown");
+      bl.block_code = var.value("blockCode", "deepbound:soil-medium");
+      if (bl.block_code.find("deepbound:") == std::string::npos)
+      {
+        bl.block_code = "deepbound:" + bl.block_code;
+      }
+
+      bl.min_temp = var.value("minTemp", -99.0f);
+      bl.max_temp = var.value("maxTemp", 99.0f);
+      bl.min_rain = var.value("minRain", 0.0f);
+      bl.max_rain = var.value("maxRain", 255.0f);
+      bl.min_thickness = var.value("minThickness", 1);
+      bl.max_thickness = var.value("maxThickness", 1);
+
+      context.block_layers.push_back(bl);
+    }
+  }
 }
 
 } // namespace deepbound

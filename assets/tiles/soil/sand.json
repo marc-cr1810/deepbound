@@ -1,0 +1,36 @@
+{
+  "code": "sand",
+  "class": "BlockSand",
+  "variantgroups": [
+    {
+      "code": "type",
+      "states": [
+        "andesite",
+        "basalt",
+        "bauxite",
+        "chalk",
+        "chert",
+        "claystone",
+        "conglomerate",
+        "granite",
+        "limestone",
+        "peridotite",
+        "phyllite",
+        "sandstone",
+        "shale",
+        "slate"
+      ]
+    }
+  ],
+  "attributes": {
+    "sidesolid": {
+      "all": true
+    },
+    "mapColorCode": "khaki"
+  },
+  "textures": {
+    "all": "tile/stone/sand/{type}"
+  },
+  "resistance": 1.2,
+  "drawtype": "cube"
+}

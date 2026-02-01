@@ -1,0 +1,35 @@
+{
+  "code": "gravel",
+  "class": "BlockGravel",
+  "variantgroups": [
+    {
+      "code": "type",
+      "states": [
+        "andesite",
+        "basalt",
+        "bauxite",
+        "chalk",
+        "chert",
+        "claystone",
+        "conglomerate",
+        "granite",
+        "limestone",
+        "phyllite",
+        "sandstone",
+        "shale",
+        "slate"
+      ]
+    }
+  ],
+  "attributes": {
+    "sidesolid": {
+      "all": true
+    },
+    "mapColorCode": "gray"
+  },
+  "textures": {
+    "all": "tile/stone/gravel/{type}"
+  },
+  "resistance": 1.5,
+  "drawtype": "cube"
+}

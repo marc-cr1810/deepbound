@@ -56,6 +56,7 @@ private:
 
   // New: Rock Strata
   // Returns block code (e.g., "deepbound:rock-granite")
+  // Returns block code (e.g., "deepbound:rock-granite")
   auto get_rock_strata(float x, float y, float density, const geologic_province_variant_t *province) -> std::string;
 
   world_gen_context_t m_context;
@@ -78,6 +79,9 @@ private:
     std::vector<strata_range_t> strata_ranges;
     std::string last_bottom_up_code;
   };
+
+  // Helper method for surface layers
+  auto apply_column_surface(chunk_t *chunk, int local_x, int world_x, int world_y_base, const cached_column_info_t &col_info) -> void;
 
   // Sharded cache to reduce mutex contention (32 shards)
   struct column_cache_shard_t

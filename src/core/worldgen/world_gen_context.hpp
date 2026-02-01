@@ -73,12 +73,25 @@ struct geologic_province_variant_t
   float weight;
 };
 
+struct block_layer_variant_t
+{
+  std::string code;
+  std::string block_code;
+  float min_temp = -99.0f;
+  float max_temp = 99.0f;
+  float min_rain = 0.0f;
+  float max_rain = 255.0f;
+  int min_thickness = 1;
+  int max_thickness = 1;
+};
+
 class world_gen_context_t
 {
 public:
   std::vector<landform_variant_t> landforms;
   std::vector<rock_strata_variant_t> rock_strata;
   std::vector<geologic_province_variant_t> geologic_provinces;
+  std::vector<block_layer_variant_t> block_layers;
 
   // Helper lookups
   auto get_landform(const std::string &code) -> const landform_variant_t *;
