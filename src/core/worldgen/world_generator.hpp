@@ -51,11 +51,10 @@ private:
   auto get_landform(float x, float y) -> const landform_variant_t *;
   auto get_landform_weights(float x, float y, std::vector<landform_weight_t> &out_weights) -> void;
 
-  // New: Geologic Province
-  auto get_province(float x, float y) -> const geologic_province_variant_t *;
+  // New: Geologic Province Constraints (Blended)
+  auto get_province_constraints(float x, float y) -> std::map<std::string, float>;
 
   // New: Rock Strata
-  // Returns block code (e.g., "deepbound:rock-granite")
   // Returns block code (e.g., "deepbound:rock-granite")
   auto get_rock_strata(float x, float y, float density, const geologic_province_variant_t *province) -> std::string;
 

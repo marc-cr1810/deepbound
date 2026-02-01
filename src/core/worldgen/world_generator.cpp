@@ -252,8 +252,45 @@ auto world_generator_t::prepare_column_data(float x, float z) -> column_data_t
     data.surface_noise = 0.0f;
   }
 
-  data.upheaval = m_upheaval_noise.get_noise(x * 0.0005f, 555) * 0.1f;
+  data.upheaval = m_upheaval_noise.get_noise(x * 0.0005f, 555); // Store raw noise (-1 to 1) for complex processing
   return data;
+}
+
+// VS-style non-linear upheaval.
+// "Rifts" (negative noise) cut into terrain from top.
+// "Upheaval" (positive noise) pushes terrain up.
+auto compute_upheaval(float y_normalized, float upheaval_noise) -> float
+{
+  float impact = 0.0f;
+  float threshold_y = 0.3f; // Below this Y, upheaval has less/no effect (mantle protection)
+
+  // Rifts (Canyons)
+  if (upheaval_noise < -0.4f)
+  {
+    // Remap -0.4..-1.0 to 0..1 intensity
+    float intensity = (std::abs(upheaval_noise) - 0.4f) / 0.6f;
+
+    // Taper: wider at top (y=1.0), narrows going down.
+    // If y > threshold, we apply negative density.
+    if (y_normalized > threshold_y)
+    {
+      // Linearly increase effect as we go up
+      float h_factor = (y_normalized - threshold_y) / (1.0f - threshold_y);
+      impact -= intensity * h_factor * 4.0f; // Strong density reduction
+    }
+  }
+  // Upheaval (Plateaus/Cliffs)
+  else if (upheaval_noise > 0.4f)
+  {
+    float intensity = (upheaval_noise - 0.4f) / 0.6f;
+    if (y_normalized > threshold_y)
+    {
+      // Boost density to create walls/mountains
+      impact += intensity * 2.0f;
+    }
+  }
+
+  return impact;
 }
 
 auto world_generator_t::get_density_from_column(float x, float y, const column_data_t &data) -> float
@@ -265,7 +302,13 @@ auto world_generator_t::get_density_from_column(float x, float y, const column_d
     blended_y_offset += w.landform->y_key_thresholds.evaluate(normalized_y) * w.weight;
   }
 
-  float base_density = (blended_y_offset - 0.5f) * 6.0f + data.upheaval;
+  // VS-style Upheaval application
+  float upheaval_mod = compute_upheaval(normalized_y, data.upheaval);
+
+  // Apply upheaval to base density.
+  // Base density formula: (Threshold - 0.5) * Scale
+  // standard blended_y_offset is 0.0-1.0.
+  float base_density = (blended_y_offset - 0.5f) * 6.0f + upheaval_mod;
 
   // Optimization: Early-out if noise cannot physically change the air/solid state
   // Using 1.0 margin as get_terrain_noise is normalized approx -1..1
@@ -295,41 +338,43 @@ float world_generator_t::get_density(float x, float y, float z)
   return get_density_from_column(x, y, data);
 }
 
-auto world_generator_t::get_province(float x, float y) -> const geologic_province_variant_t *
+auto world_generator_t::get_province_constraints(float x, float y) -> std::map<std::string, float>
 {
+  std::map<std::string, float> blended_thickness;
   if (m_context.geologic_provinces.empty())
-    return nullptr;
+    return blended_thickness;
 
-  // Provinces match VS: ~4096 blocks (64 * 64).
+  // Distortion (Domain Warping)
+  float province_scale = 4096.0f;
   float wobble_freq = 0.0005f;
   float wobble_mag = 2000.0f;
-
   float wx = x + m_province_noise.get_noise(x * wobble_freq, y * wobble_freq) * wobble_mag;
   float wy = y + m_province_noise.get_noise(y * wobble_freq, x * wobble_freq + 1000) * wobble_mag;
 
-  float scale = 4096.0f;
-  int px = (int)std::floor(wx / scale);
-  int py = (int)std::floor(wy / scale);
+  float u = wx / province_scale;
+  float v = wy / province_scale;
 
-  float normalized = get_random_float(px, py, m_province_noise.get_seed());
+  // Grid Centers (shifted)
+  int x0 = (int)std::floor(u - 0.5f);
+  int y0 = (int)std::floor(v - 0.5f);
+  int x1 = x0 + 1;
+  int y1 = y0 + 1;
 
-  size_t index = (size_t)(normalized * m_context.geologic_provinces.size());
-  if (index >= m_context.geologic_provinces.size())
-    index = m_context.geologic_provinces.size() - 1;
+  float s = (u - 0.5f) - x0;
+  float t = (v - 0.5f) - y0;
 
-  // VS uses weighted list for provinces too (NoiseGeoProvince.cs).
-  // I should check weights. But checking JSON for provinces...
-  // Assuming equal weights for now or relying on index mapping if weight sum is not used.
-  // Wait, NoiseGeoProvince uses weights. I need to iterate weights.
-  // Let's implement weighted selection for provinces.
-
-  if (!m_context.geologic_provinces.empty())
+  // Helper to get province variant for a grid coordinate
+  auto get_p_variant = [&](int gx, int gy) -> const geologic_province_variant_t *
   {
+    float norm = get_random_float(gx, gy, m_province_noise.get_seed());
+
+    // Weighted Selection from loaded variants
+    // (Assuming simple deterministic selection for stability)
     float total_weight = 0.0f;
     for (const auto &p : m_context.geologic_provinces)
       total_weight += p.weight;
 
-    float r = normalized * total_weight;
+    float r = norm * total_weight;
     float current = 0.0f;
     for (const auto &p : m_context.geologic_provinces)
     {
@@ -338,9 +383,30 @@ auto world_generator_t::get_province(float x, float y) -> const geologic_provinc
         return &p;
     }
     return &m_context.geologic_provinces.back();
-  }
+  };
 
-  return &m_context.geologic_provinces[index];
+  const auto *p00 = get_p_variant(x0, y0);
+  const auto *p10 = get_p_variant(x1, y0);
+  const auto *p01 = get_p_variant(x0, y1);
+  const auto *p11 = get_p_variant(x1, y1);
+
+  // Helper to accumulate weighted properties
+  auto accumulate = [&](const geologic_province_variant_t *p, float w)
+  {
+    if (w <= 0.001f)
+      return;
+    for (const auto &kv : p->rock_strata_thickness)
+    {
+      blended_thickness[kv.first] += kv.second * w;
+    }
+  };
+
+  accumulate(p00, (1.0f - s) * (1.0f - t));
+  accumulate(p10, s * (1.0f - t));
+  accumulate(p01, (1.0f - s) * t);
+  accumulate(p11, s * t);
+
+  return blended_thickness;
 }
 
 auto world_generator_t::get_rock_strata(float x, float y, float density, const geologic_province_variant_t *province) -> std::string
@@ -396,7 +462,9 @@ auto world_generator_t::generate_chunk(int chunk_x, int chunk_y) -> std::unique_
       col_info_ptr->surface_y = surface_y;
 
       // 3. Strata Generation
-      const geologic_province_variant_t *current_province = get_province((float)wx, 0);
+      // New: Blended Province Constraints
+      // Instead of getting one province, we calculate the blended limits for this X position.
+      auto province_constraints = get_province_constraints((float)wx, 0.0f);
 
       static thread_local std::vector<std::pair<std::string, float>> rock_usage;
       rock_usage.clear();
@@ -415,13 +483,12 @@ auto world_generator_t::generate_chunk(int chunk_x, int chunk_y) -> std::unique_
         float thickness = thickness_raw * 10.0f + 20.0f;
 
         float max_allowed = 999.0f;
-        if (current_province)
+
+        // Use blended constraints dict
+        auto it = province_constraints.find(stratum.rock_group);
+        if (it != province_constraints.end())
         {
-          auto it = current_province->rock_strata_thickness.find(stratum.rock_group);
-          if (it != current_province->rock_strata_thickness.end())
-          {
-            max_allowed = it->second * 2.0f;
-          }
+          max_allowed = it->second * 2.0f;
         }
 
         float used = 0.0f;
