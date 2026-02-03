@@ -33,6 +33,22 @@ struct Landform
   NoiseConfig noise;
 };
 
+struct BlockLayerEntry
+{
+  std::string tile_code;
+  int min_thickness;
+  int max_thickness;
+};
+
+struct BlockLayer
+{
+  std::string name;
+  float min_temp, max_temp;
+  float min_rain, max_rain;
+  std::vector<BlockLayerEntry> entries;
+  std::vector<BlockLayerEntry> submerged_entries;
+};
+
 class world_generator_t
 {
 public:
@@ -40,6 +56,7 @@ public:
   ~world_generator_t();
 
   void load_config(const std::string &path);
+  void load_block_layers(const std::string &path);
 
   // Main generate function
   void generate_chunk(chunk_t *chunk, int chunk_x, int chunk_y);
@@ -53,22 +70,26 @@ private:
 
   // FastNoise2 Generators
   FastNoise::SmartNode<> continental_noise;
+  FastNoise::SmartNode<> temp_noise;
+  FastNoise::SmartNode<> rain_noise;
+  FastNoise::SmartNode<> thickness_noise;
+
   std::vector<FastNoise::SmartNode<>> landform_noises;
   std::vector<Landform> landforms;
-
-  // Pre-calculated or cached noise objects if needed
-  // Actually FastNoise2 uses nodes, so we just setup a graph or separate nodes.
-  // For simplicity, we'll likely just create separate GenSimplex or Fractal nodes.
+  std::vector<BlockLayer> block_layers;
 
   // Helper to get height at x
   float get_height_at(int x);
+
+  // Helper to sample climate
+  auto get_climate_at(int x) -> std::pair<float, float>; // temp (-50..50), rain (0..255)
 
   // Tiles needed
   const tile_definition_t *stone_tile = nullptr;
   const tile_definition_t *dirt_tile = nullptr;
   const tile_definition_t *grass_tile = nullptr;
   const tile_definition_t *water_tile = nullptr;
-  const tile_definition_t *air_tile = nullptr; // nullptr usually means air but let's be safe.
+  const tile_definition_t *air_tile = nullptr;
 };
 
 } // namespace deepbound

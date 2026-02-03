@@ -64,10 +64,6 @@ void world_generator_t::load_config(const std::string &path)
     float lacunarity = cn.value("lacunarity", 2.0f);
     float gain = cn.value("gain", 0.5f);
 
-    // Create FastNoise2 Node
-    // Since FastNoise2 is node based, let's use the simplest generator approach first
-    // "FractalFBm" is standard Perlin-like layered noise.
-
     auto signal = FastNoise::New<FastNoise::Simplex>();
     auto fractal = FastNoise::New<FastNoise::FractalFBm>();
     fractal->SetSource(signal);
@@ -75,13 +71,47 @@ void world_generator_t::load_config(const std::string &path)
     fractal->SetGain(gain);
     fractal->SetLacunarity(lacunarity);
 
-    // Frequency scaling needs to be applied to coordinates or via a DomainScale node
     auto scale = FastNoise::New<FastNoise::DomainScale>();
     scale->SetSource(fractal);
     scale->SetScale(frequency);
 
     continental_noise = scale;
   }
+
+  // Climate Noise Setup (Temp)
+  {
+    auto signal = FastNoise::New<FastNoise::Simplex>();
+    auto fractal = FastNoise::New<FastNoise::FractalFBm>();
+    fractal->SetSource(signal);
+    fractal->SetOctaveCount(3);
+    fractal->SetGain(0.5f);
+    fractal->SetLacunarity(2.0f);
+
+    auto scale = FastNoise::New<FastNoise::DomainScale>();
+    scale->SetSource(fractal);
+    scale->SetScale(0.0001f); // Very slow variation for climate
+
+    temp_noise = scale;
+  }
+
+  // Climate Noise Setup (Rain)
+  {
+    auto signal = FastNoise::New<FastNoise::Simplex>();
+    auto fractal = FastNoise::New<FastNoise::FractalFBm>();
+    fractal->SetSource(signal);
+    fractal->SetOctaveCount(3);
+    fractal->SetGain(0.5f);
+    fractal->SetLacunarity(2.0f);
+
+    auto scale = FastNoise::New<FastNoise::DomainScale>();
+    scale->SetSource(fractal);
+    scale->SetScale(0.00012f); // Slightly different scale
+
+    rain_noise = scale;
+  }
+
+  // Initialize thickness noise (Higher frequency for localized variation, but smooth)
+  thickness_noise = FastNoise::New<FastNoise::Perlin>();
 
   // Landforms
   if (j.contains("landforms"))
@@ -102,9 +132,8 @@ void world_generator_t::load_config(const std::string &path)
         lf.noise.lacunarity = n.value("lacunarity", 2.0f);
         lf.noise.gain = n.value("gain", 0.5f);
         lf.noise.amplitude = n.value("amplitude", 1.0f);
-        lf.noise.seed = 1337 + landforms.size(); // Different seeds or same depending on desired correlation
+        lf.noise.seed = 1337 + (int)landforms.size();
 
-        // Build noise generator for this landform
         auto signal = FastNoise::New<FastNoise::Simplex>();
         auto fractal = FastNoise::New<FastNoise::FractalFBm>();
         fractal->SetSource(signal);
@@ -120,7 +149,6 @@ void world_generator_t::load_config(const std::string &path)
       }
       else
       {
-        // Fallback or empty noise
         landform_noises.push_back(nullptr);
       }
 
@@ -129,6 +157,93 @@ void world_generator_t::load_config(const std::string &path)
   }
 
   std::cout << "World Generator Config Loaded. " << landforms.size() << " landforms." << std::endl;
+}
+
+void world_generator_t::load_block_layers(const std::string &path)
+{
+  std::ifstream file(path);
+  if (!file.is_open())
+  {
+    std::cerr << "Failed to open block layers config: " << path << std::endl;
+    return;
+  }
+
+  nlohmann::json j;
+  file >> j;
+
+  if (j.contains("block_layers"))
+  {
+    block_layers.clear();
+    for (const auto &bl : j["block_layers"])
+    {
+      BlockLayer layer;
+      layer.name = bl.value("name", "Unknown");
+      layer.min_temp = bl.value("min_temp", -50.0f);
+      layer.max_temp = bl.value("max_temp", 50.0f);
+      layer.min_rain = bl.value("min_rain", 0.0f);
+      layer.max_rain = bl.value("max_rain", 255.0f);
+
+      if (bl.contains("entries"))
+      {
+        for (const auto &entry_j : bl["entries"])
+        {
+          BlockLayerEntry entry;
+          entry.tile_code = entry_j.value("tile", "air");
+
+          if (entry_j.contains("thickness"))
+          {
+            if (entry_j["thickness"].is_array())
+            {
+              entry.min_thickness = entry_j["thickness"][0];
+              entry.max_thickness = entry_j["thickness"][1];
+            }
+            else
+            {
+              entry.min_thickness = entry.max_thickness = entry_j.value("thickness", 1);
+            }
+          }
+          else
+          {
+            entry.min_thickness = entry.max_thickness = 1;
+          }
+
+          layer.entries.push_back(entry);
+        }
+      }
+
+      if (bl.contains("submerged_entries"))
+      {
+        for (const auto &entry_j : bl["submerged_entries"])
+        {
+          BlockLayerEntry entry;
+          entry.tile_code = entry_j.value("tile", "air");
+
+          if (entry_j.contains("thickness"))
+          {
+            if (entry_j["thickness"].is_array())
+            {
+              entry.min_thickness = entry_j["thickness"][0];
+              entry.max_thickness = entry_j["thickness"][1];
+            }
+            else
+            {
+              entry.min_thickness = entry.max_thickness = entry_j.value("thickness", 1);
+            }
+          }
+          else
+          {
+            entry.min_thickness = entry.max_thickness = 1;
+          }
+
+          layer.submerged_entries.push_back(entry);
+        }
+      }
+
+      block_layers.push_back(layer);
+    }
+  }
+
+  std::cout << "Block Layers Loaded. " << block_layers.size() << " layers." << std::endl;
 }
 
 void world_generator_t::generate_chunk(chunk_t *chunk, int chunk_x, int chunk_y)
@@ -143,6 +258,22 @@ void world_generator_t::generate_chunk(chunk_t *chunk, int chunk_x, int chunk_y)
 
     // Calculate surface height for this column
     float surface_height = get_height_at(global_x);
+    auto climate = get_climate_at(global_x);
+
+    // Pick topsoil layer based on climate
+    const BlockLayer *active_layer = nullptr;
+    for (const auto &layer : block_layers)
+    {
+      if (climate.first >= layer.min_temp && climate.first <= layer.max_temp && climate.second >= layer.min_rain && climate.second <= layer.max_rain)
+      {
+        active_layer = &layer;
+        break;
+      }
+    }
+
+    // Default layer if none matched (plains-like)
+    if (!active_layer && !block_layers.empty())
+      active_layer = &block_layers[0];
 
     for (int y = 0; y < chunk_t::SIZE; y++)
     {
@@ -150,38 +281,84 @@ void world_generator_t::generate_chunk(chunk_t *chunk, int chunk_x, int chunk_y)
 
       const tile_definition_t *tile = air_tile;
 
-      if (global_y < surface_height)
+      if (global_y <= (int)surface_height)
       {
-        // Below ground
-        if (global_y < surface_height - 5)
+        // Ground logic
+        if (active_layer)
         {
-          tile = stone_tile;
+          int depth = (int)surface_height - global_y;
+          int current_depth_limit = 0;
+          bool placed = false;
+
+          bool is_submerged = surface_height < sea_level;
+          const auto &entries = (is_submerged && !active_layer->submerged_entries.empty()) ? active_layer->submerged_entries : active_layer->entries;
+
+          for (const auto &entry : entries)
+          {
+            // Calculate thickness for this column using smooth noise
+            int thickness = entry.min_thickness;
+            if (entry.max_thickness > entry.min_thickness && thickness_noise)
+            {
+              // Use a different seed/offset per entry to avoid correlated thickness
+              float t_noise = thickness_noise->GenSingle2D(global_x * 0.1f, (float)current_depth_limit, 444);
+              float t_val = (t_noise + 1.0f) * 0.5f;
+              thickness += (int)(t_val * (entry.max_thickness - entry.min_thickness + 0.99f));
+            }
+
+            current_depth_limit += thickness;
+
+            if (depth < current_depth_limit)
+            {
+              tile = deepbound::tile_registry_t::get().get_tile(resource_id_t("deepbound", entry.tile_code));
+              placed = true;
+              break;
+            }
+          }
+
+          if (!placed)
+            tile = stone_tile;
         }
         else
         {
-          tile = dirt_tile;
+          // Fallback
+          if (global_y < surface_height - 5)
+            tile = stone_tile;
+          else
+            tile = dirt_tile;
         }
-      }
-      else if (global_y == (int)surface_height)
-      {
-        // Surface layer
-        if (global_y < sea_level)
-          tile = dirt_tile;
-        else
-          tile = grass_tile;
       }
       else
       {
         // Above ground
         if (global_y < sea_level)
-        {
           tile = water_tile;
-        }
       }
 
       chunk->set_tile(x, y, tile);
+      // Store climate for rendering (tinting)
+      chunk->set_climate(x, y, climate.first, climate.second);
     }
   }
+}
+
+std::pair<float, float> world_generator_t::get_climate_at(int x)
+{
+  float t = 0.0f;
+  float r = 128.0f;
+
+  if (temp_noise)
+  {
+    float val = temp_noise->GenSingle2D(x, 0, 999); // Seed for temp
+    t = val * 30.0f + 10.0f;                        // -20 to 40 approx
+  }
+
+  if (rain_noise)
+  {
+    float val = rain_noise->GenSingle2D(x, 0, 888); // Seed for rain
+    r = (val + 1.0f) * 0.5f * 255.0f;               // 0 to 255
+  }
+
+  return {t, r};
 }
 
 float world_generator_t::get_height_at(int x)

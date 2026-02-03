@@ -1,0 +1,118 @@
+{
+  "block_layers": [
+    {
+      "name": "Desert",
+      "min_temp": 25,
+      "max_temp": 50,
+      "min_rain": 0,
+      "max_rain": 60,
+      "entries": [
+        {
+          "tile": "sand-sandstone",
+          "thickness": [
+            4,
+            7
+          ]
+        },
+        {
+          "tile": "rock-sandstone",
+          "thickness": [
+            2,
+            4
+          ]
+        }
+      ],
+      "submerged_entries": [
+        {
+          "tile": "sand-sandstone",
+          "thickness": [
+            6,
+            10
+          ]
+        },
+        {
+          "tile": "rock-sandstone",
+          "thickness": [
+            2,
+            4
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Temperate Grassland",
+      "min_temp": 5,
+      "max_temp": 25,
+      "min_rain": 100,
+      "max_rain": 255,
+      "entries": [
+        {
+          "tile": "soil-medium-normal",
+          "thickness": 1
+        },
+        {
+          "tile": "soil-medium-none",
+          "thickness": [
+            3,
+            5
+          ]
+        }
+      ],
+      "submerged_entries": [
+        {
+          "tile": "soil-low-none",
+          "thickness": [
+            1,
+            2
+          ]
+        },
+        {
+          "tile": "gravel-andesite",
+          "thickness": [
+            2,
+            4
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Cold Tundra",
+      "min_temp": -50,
+      "max_temp": 5,
+      "min_rain": 0,
+      "max_rain": 255,
+      "entries": [
+        {
+          "tile": "soil-low-none",
+          "thickness": [
+            1,
+            2
+          ]
+        },
+        {
+          "tile": "rock-granite",
+          "thickness": [
+            3,
+            5
+          ]
+        }
+      ],
+      "submerged_entries": [
+        {
+          "tile": "gravel-andesite",
+          "thickness": [
+            2,
+            5
+          ]
+        },
+        {
+          "tile": "rock-granite",
+          "thickness": [
+            2,
+            4
+          ]
+        }
+      ]
+    }
+  ]
+}
