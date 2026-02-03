@@ -3,7 +3,7 @@
 #include <glad/glad.h>
 
 #include "core/assets/asset_manager.hpp"
-#include "core/worldgen/chunk.hpp"
+#include "core/worldgen/world.hpp"
 #include "core/content/tile.hpp"
 
 namespace deepbound
@@ -124,14 +124,12 @@ chunk_renderer_t::~chunk_renderer_t()
   glDeleteVertexArrays(1, &m_vao);
 }
 
-auto chunk_renderer_t::render(const chunk_t &chunk, const camera_2d_t &camera, float aspect_ratio) -> void
+auto chunk_renderer_t::render(chunk_t &chunk, const camera_2d_t &camera, float aspect_ratio) -> void
 {
   m_shader->bind();
 
-  // Bind Texture Atlas (Slot 0)
-  glActiveTexture(GL_TEXTURE0);
-  auto &atlas = asset_manager_t::get().get_atlas_texture("tiles");
-  glBindTexture(GL_TEXTURE_2D, atlas.get_id());
+  // Bind Atlas Texture to Slot 0
+  asset_manager_t::get().get_atlas_texture("tiles").bind(0);
   glUniform1i(glGetUniformLocation(m_shader->get_renderer_id(), "uAtlas"), 0);
 
   // Bind Tint UVs (lookup from Atlas)
@@ -205,20 +203,18 @@ auto chunk_renderer_t::render(const chunk_t &chunk, const camera_2d_t &camera, f
   if (chunk.is_mesh_dirty())
   {
     std::vector<float> vertices;
-    vertices.reserve(CHUNK_SIZE * CHUNK_SIZE * 42); // Reserved 7 floats * 6 verts * blocks
+    vertices.reserve(chunk_t::SIZE * chunk_t::SIZE * 42); // Reserved 7 floats * 6 verts * blocks
 
-    float chunk_world_x = (float)chunk.get_x() * CHUNK_SIZE;
-    float chunk_world_y = (float)chunk.get_y() * CHUNK_SIZE;
+    float chunk_world_x = (float)chunk.get_x() * chunk_t::SIZE;
+    float chunk_world_y = (float)chunk.get_y() * chunk_t::SIZE;
 
-    for (int y = 0; y < CHUNK_SIZE; ++y)
+    for (int y = 0; y < chunk_t::SIZE; ++y)
     {
-      for (int x = 0; x < CHUNK_SIZE; ++x)
+      for (int x = 0; x < chunk_t::SIZE; ++x)
       {
-        auto &id = chunk.get_tile(x, y);
-        if (id.get_path() == "air")
+        const auto *def = chunk.get_tile(x, y);
+        if (!def || def->code == "air") // Assuming air is nullptr or has code "air"
           continue;
-
-        const auto *def = tile_registry_t::get().get_tile(id);
 
         // Climate Data
         auto clim = chunk.get_climate(x, y);
@@ -231,19 +227,17 @@ auto chunk_renderer_t::render(const chunk_t &chunk, const camera_2d_t &camera, f
 
         // Tint ID lookup
         float block_tint_id = 0.0f;
-        if (def && !def->climate_color_map.empty())
+        if (!def->climate_color_map.empty())
         {
           // Lookup in our slot map (data driven)
           if (tint_slots.count(def->climate_color_map))
           {
-            // If mapped to slot 1, shader logic expects ID?
-            // Shader: idx = id - 1. if id=1, idx=0 -> uTints[0] -> Slot 1. Correct.
             block_tint_id = (float)tint_slots[def->climate_color_map];
           }
         }
 
         uv_rect_t uvs = {0, 0, 0, 0};
-        if (def && !def->textures.empty())
+        if (!def->textures.empty())
         {
           if (def->textures.contains("all"))
             uvs = asset_manager_t::get().get_texture_uvs("tiles", def->textures.at("all"));
@@ -252,7 +246,8 @@ auto chunk_renderer_t::render(const chunk_t &chunk, const camera_2d_t &camera, f
         }
         else
         {
-          uvs = asset_manager_t::get().get_texture_uvs("tiles", id);
+          // Fallback using ID if no textures defined?
+          uvs = asset_manager_t::get().get_texture_uvs("tiles", def->id);
         }
 
         float gx = chunk_world_x + (float)x;
@@ -279,7 +274,7 @@ auto chunk_renderer_t::render(const chunk_t &chunk, const camera_2d_t &camera, f
           }
           else
           {
-            base_uv = asset_manager_t::get().get_texture_uvs("tiles", id);
+            base_uv = asset_manager_t::get().get_texture_uvs("tiles", def->id);
           }
           push_quad(base_uv, 0.0f);
 
@@ -318,6 +313,8 @@ auto chunk_renderer_t::render(const chunk_t &chunk, const camera_2d_t &camera, f
   const auto &mesh = chunk.get_mesh();
   if (mesh.empty())
     return;
+
+  // std::cout << "Render: " << chunk.get_x() << "," << chunk.get_y() << " V:" << mesh.size() / 7 << std::endl;
 
   glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
   glBufferData(GL_ARRAY_BUFFER, mesh.size() * sizeof(float), mesh.data(), GL_STATIC_DRAW);

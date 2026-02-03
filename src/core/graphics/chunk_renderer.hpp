@@ -3,7 +3,7 @@
 #include <memory>
 #include "core/graphics/camera.hpp"
 #include "core/graphics/shader.hpp"
-#include "core/worldgen/chunk.hpp"
+#include "core/worldgen/world.hpp"
 #include <vector>
 
 namespace deepbound
@@ -15,7 +15,7 @@ public:
   chunk_renderer_t();
   ~chunk_renderer_t();
 
-  auto render(const chunk_t &chunk, const camera_2d_t &camera, float aspect_ratio = 1.0f) -> void;
+  auto render(chunk_t &chunk, const camera_2d_t &camera, float aspect_ratio = 1.0f) -> void;
 
 private:
   unsigned int m_vao;

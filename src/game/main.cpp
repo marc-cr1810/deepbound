@@ -5,10 +5,7 @@
 #include "core/assets/json_loader.hpp"
 #include "core/graphics/chunk_renderer.hpp"
 #include "core/graphics/window.hpp"
-#include "core/worldgen/landform.hpp"
-#include "core/worldgen/rock_strata.hpp"
 #include "core/graphics/window.hpp"
-#include "core/worldgen/world_generator.hpp"
 #include "core/worldgen/world.hpp"
 #include <iostream>
 
@@ -152,7 +149,7 @@ int main(int argc, char *argv[])
       {
         if (tile_id)
         {
-          ImGui::Text("Tile: %s", tile_id->to_string().c_str());
+          ImGui::Text("Tile: %s", tile_id->code.c_str());
           ImGui::Text("Pos: %.1f, %.1f", world_mouse_x, world_mouse_y);
         }
         else
@@ -167,6 +164,7 @@ int main(int argc, char *argv[])
 
     // Render visible chunks
     auto visible_chunks = world.get_visible_chunks(camera.get_position(), 4); // Range 4
+
     for (auto *chunk : visible_chunks)
     {
       renderer.render(*chunk, camera, aspect);

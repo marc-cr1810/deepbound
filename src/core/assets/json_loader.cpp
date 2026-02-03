@@ -1,6 +1,6 @@
 #include "core/assets/json_loader.hpp"
 #include "core/content/tile.hpp"
-#include "core/worldgen/world_gen_context.hpp"
+// #include "core/worldgen/world_gen_context.hpp"
 #include "core/common/resource_id.hpp"
 #include "core/assets/asset_manager.hpp"
 #include "core/worldgen/world_generator.hpp"
@@ -289,139 +289,7 @@ auto json_loader_t::parse_and_register_tile(const std::string &json_content, con
   }
 }
 
-auto json_loader_t::load_strata_from_file(const std::string &file_path) -> void
-{
-  // Implementation placeholder
-}
-
-auto json_loader_t::parse_strata_json(const std::string &json_content) -> void
-{
-  // Implementation placeholder
-}
-
-auto json_loader_t::load_worldgen(const std::string &base_dir, world_gen_context_t &context) -> void
-{
-  auto load_file = [](const std::string &path) -> nlohmann::json
-  {
-    if (!std::filesystem::exists(path))
-      return nlohmann::json();
-
-    try
-    {
-      std::ifstream f(path);
-      std::stringstream buffer;
-      buffer << f.rdbuf();
-      std::string content = standardize_json(buffer.str());
-      // Use parse with ignore_comments = true just in case standardize missed some
-      return nlohmann::json::parse(content, nullptr, true, true);
-    }
-    catch (const std::exception &e)
-    {
-      std::cerr << "JSON Parse Error in " << path << ": " << e.what() << std::endl;
-      return nlohmann::json();
-    }
-  };
-
-  // Load Landforms
-  nlohmann::json j_landforms = load_file(base_dir + "/landforms.json");
-  if (j_landforms.contains("variants"))
-  {
-    for (const auto &var : j_landforms["variants"])
-    {
-      landform_variant_t lf;
-      lf.code = var.value("code", "unknown");
-      lf.hexcolor = var.value("hexcolor", "#FFFFFF");
-      lf.weight = var.value("weight", 1.0f);
-      lf.use_climate = var.value("useClimateMap", false);
-      lf.min_temp = var.value("minTemp", -50.0f);
-      lf.max_temp = var.value("maxTemp", 50.0f);
-      lf.min_rain = var.value("minRain", 0.0f);
-      lf.max_rain = var.value("maxRain", 255.0f);
-
-      if (var.contains("terrainOctaves"))
-        lf.terrain_octaves = var["terrainOctaves"].get<std::vector<double>>();
-
-      if (var.contains("terrainOctaveThresholds"))
-        lf.terrain_octave_thresholds = var["terrainOctaveThresholds"].get<std::vector<double>>();
-
-      if (var.contains("terrainYKeyPositions"))
-        lf.y_key_thresholds.keys = var["terrainYKeyPositions"].get<std::vector<float>>();
-
-      if (var.contains("terrainYKeyThresholds"))
-        lf.y_key_thresholds.values = var["terrainYKeyThresholds"].get<std::vector<float>>();
-
-      context.landforms.push_back(lf);
-    }
-  }
-
-  // Load Rock Strata
-  nlohmann::json j_strata = load_file(base_dir + "/rockstrata.json");
-  if (j_strata.contains("variants"))
-  {
-    for (const auto &var : j_strata["variants"])
-    {
-      rock_strata_variant_t rs;
-      rs.block_code = var.value("blockcode", "rock-granite");
-      rs.rock_group = var.value("rockGroup", "Igneous");
-      rs.gen_dir = var.value("genDir", "BottomUp");
-
-      if (var.contains("amplitudes"))
-        rs.amplitudes = var["amplitudes"].get<std::vector<float>>();
-      if (var.contains("thresholds"))
-        rs.thresholds = var["thresholds"].get<std::vector<float>>();
-      if (var.contains("frequencies"))
-        rs.frequencies = var["frequencies"].get<std::vector<float>>();
-
-      context.rock_strata.push_back(rs);
-    }
-  }
-
-  // Load Geologic Provinces
-  nlohmann::json j_prov = load_file(base_dir + "/geologicprovinces.json");
-  if (j_prov.contains("variants"))
-  {
-    for (const auto &var : j_prov["variants"])
-    {
-      geologic_province_variant_t gp;
-      gp.code = var.value("code", "unknown");
-      gp.weight = var.value("weight", 10.0f);
-
-      if (var.contains("rockstrata"))
-      {
-        for (auto &[key, val] : var["rockstrata"].items())
-        {
-          gp.rock_strata_thickness[key] = val.value("maxThickness", 0.0f);
-        }
-      }
-      context.geologic_provinces.push_back(gp);
-    }
-  }
-
-  // Load Block Layers
-  nlohmann::json j_layers = load_file(base_dir + "/blocklayers.json");
-  if (j_layers.contains("blocklayers"))
-  {
-    for (const auto &var : j_layers["blocklayers"])
-    {
-      block_layer_variant_t bl;
-      bl.code = var.value("code", "unknown");
-      bl.block_code = var.value("blockCode", "deepbound:soil-medium");
-      if (bl.block_code.find("deepbound:") == std::string::npos)
-      {
-        bl.block_code = "deepbound:" + bl.block_code;
-      }
-
-      bl.min_temp = var.value("minTemp", -99.0f);
-      bl.max_temp = var.value("maxTemp", 99.0f);
-      bl.min_rain = var.value("minRain", 0.0f);
-      bl.max_rain = var.value("maxRain", 255.0f);
-      bl.min_thickness = var.value("minThickness", 1);
-      bl.max_thickness = var.value("maxThickness", 1);
-
-      context.block_layers.push_back(bl);
-    }
-  }
-}
+// Obsolete worldgen loading removed. WorldGenerator handles its own loading now.
 
 auto json_loader_t::load_color_maps(const std::string &file_path) -> void
 {

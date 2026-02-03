@@ -1,104 +1,124 @@
 #include "core/worldgen/world.hpp"
+#include "core/worldgen/world_generator.hpp"
+#include "core/content/tile.hpp"
 #include <iostream>
-#include <cmath>
 
 namespace deepbound
 {
 
 world_t::world_t()
 {
+  // Initialize Generator
+  generator = std::make_unique<world_generator_t>(this);
+  // Load config relative to executable or known path
+  generator->load_config("assets/worldgen/landforms.json");
+
+  // Pre-generate some chunks around user spawn?
+  // Let's just generate the origin (0,0) chunk for now to verify.
+  // get_chunk(0, 0);
 }
 
-auto world_t::get_chunk(int chunk_x, int chunk_y) -> chunk_t *
+world_t::~world_t()
 {
+}
+
+void world_t::update(double delta_time)
+{
+  // Update chunks, simulate water, entities...
+}
+
+const tile_definition_t *world_t::get_tile_at(float world_x, float world_y) const
+{
+  int tx = (int)floor(world_x);
+  int ty = (int)floor(world_y);
+  return get_tile_at(tx, ty);
+}
+
+const tile_definition_t *world_t::get_tile_at(int x, int y) const
+{
+  // Calculate chunk coordinates
+  // Chunks are 32x32
+  int cx = x / chunk_t::SIZE;
+  int cy = y / chunk_t::SIZE;
+
+  // Handle negative coords correctly for integer division towards -inf
+  if (x < 0 && x % chunk_t::SIZE != 0)
+    cx -= 1;
+  if (y < 0 && y % chunk_t::SIZE != 0)
+    cy -= 1;
+
+  // Check key
+  long long key = ((long long)cx << 32) | (unsigned int)cy;
+  auto search = chunks.find(key);
+  if (search != chunks.end())
   {
-    std::lock_guard<std::mutex> lock(m_chunks_mutex);
-    auto it = m_chunks.find({chunk_x, chunk_y});
-    if (it != m_chunks.end())
-    {
-      return it->second.get();
-    }
+    const auto &chunk = search->second;
+    // Local coords
+    int lx = x - (cx * chunk_t::SIZE);
+    int ly = y - (cy * chunk_t::SIZE);
 
-    if (m_generating.count({chunk_x, chunk_y}))
-    {
-      return nullptr;
-    }
-
-    // Mark as generating
-    m_generating.insert({chunk_x, chunk_y});
+    // Ensure positive modulo
+    // lx should naturally be 0..31 if we did floor math right
+    // Let's rely on get_tile bounds check
+    return chunk->get_tile(lx, ly);
   }
 
-  // Launch async generation
-  std::thread(
-      [this, chunk_x, chunk_y]()
-      {
-        auto chunk = m_generator.generate_chunk(chunk_x, chunk_y);
-
-        std::lock_guard<std::mutex> lock(m_chunks_mutex);
-        m_chunks[{chunk_x, chunk_y}] = std::move(chunk);
-        m_generating.erase({chunk_x, chunk_y});
-      })
-      .detach();
-
-  return nullptr;
+  return nullptr; // No chunk or Air
 }
 
-auto world_t::get_tile_at(float world_x, float world_y) -> std::optional<resource_id_t>
+bool world_t::is_solid(float x, float y) const
 {
-  // floor() is essential because negative casts truncate towards zero, but we want grid coordinates
-  int tx = (int)std::floor(world_x);
-  int ty = (int)std::floor(world_y);
-
-  int cx = (int)std::floor((float)tx / (float)CHUNK_SIZE);
-  int cy = (int)std::floor((float)ty / (float)CHUNK_SIZE);
-
-  chunk_t *chunk = get_chunk(cx, cy);
-  if (!chunk)
-    return std::nullopt;
-
-  int lx = tx % CHUNK_SIZE;
-  int ly = ty % CHUNK_SIZE;
-
-  // Handle wrap-around for negative modulo in C++
-  if (lx < 0)
-    lx += CHUNK_SIZE;
-  if (ly < 0)
-    ly += CHUNK_SIZE;
-
-  return chunk->get_tile(lx, ly);
+  auto t = get_tile_at(x, y);
+  return t != nullptr; // Non-null means solid for now.
 }
 
-auto world_t::update(const glm::vec2 &camera_pos) -> void
-{
-  // In a real game, unloading logic would go here.
-  // For now, we just grow infinitely.
-}
-
-auto world_t::get_visible_chunks(const glm::vec2 &camera_pos, int range) -> std::vector<chunk_t *>
+std::vector<chunk_t *> world_t::get_visible_chunks(const glm::vec2 &camera_pos, int view_distance)
 {
   std::vector<chunk_t *> visible;
 
-  // camera_pos is in world units (blocks).
-  // Convert to chunk coordinates.
-  // Assuming blocks are 1x1 units for now.
-  // CHUNK_SIZE is 32.
+  int cx_start = (int)floor(camera_pos.x) / chunk_t::SIZE - view_distance;
+  int cx_end = (int)floor(camera_pos.x) / chunk_t::SIZE + view_distance;
+  int cy_start = (int)floor(camera_pos.y) / chunk_t::SIZE - view_distance;
+  int cy_end = (int)floor(camera_pos.y) / chunk_t::SIZE + view_distance;
 
-  int center_chunk_x = (int)std::floor(camera_pos.x / CHUNK_SIZE);
-  int center_chunk_y = (int)std::floor(camera_pos.y / CHUNK_SIZE);
+  // Ensure height bounds too? Max 1024 -> 32 chunks high
+  // Chunks start at Y=0 usually?
+  if (cy_start < 0)
+    cy_start = 0;
+  if (cy_end > 32)
+    cy_end = 32;
 
-  // Simple square radius
-  for (int y = -range; y <= range; ++y)
+  for (int cx = cx_start; cx <= cx_end; cx++)
   {
-    for (int x = -range; x <= range; ++x)
+    for (int cy = cy_start; cy <= cy_end; cy++)
     {
-      chunk_t *chunk = get_chunk(center_chunk_x + x, center_chunk_y + y);
-      if (chunk)
-      {
-        visible.push_back(chunk);
-      }
+      visible.push_back(get_chunk(cx, cy));
     }
   }
   return visible;
+}
+
+chunk_t *world_t::get_chunk(int cx, int cy)
+{
+  long long key = get_chunk_key(cx, cy);
+
+  // Check if exists
+  if (chunks.find(key) == chunks.end())
+  {
+    // Generate
+    auto new_chunk = std::make_unique<chunk_t>();
+    new_chunk->x = cx * chunk_t::SIZE; // World X origin
+    new_chunk->y = cy * chunk_t::SIZE; // World Y origin
+
+    if (generator)
+    {
+      generator->generate_chunk(new_chunk.get(), cx, cy);
+    }
+
+    chunks[key] = std::move(new_chunk);
+  }
+
+  return chunks[key].get();
 }
 
 } // namespace deepbound

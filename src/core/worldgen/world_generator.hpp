@@ -1,113 +1,74 @@
 #pragma once
 
-#include "core/worldgen/chunk.hpp"
-#include "core/worldgen/fastnoise_wrapper.hpp"
-#include "core/worldgen/world_gen_context.hpp"
-#include <memory>
 #include <vector>
-#include <array>
-#include <unordered_map>
 #include <string>
-#include <map>
-#include <mutex>
+#include <memory>
+#include <nlohmann/json.hpp>
+#include <FastNoise/FastNoise.h>
 
 namespace deepbound
 {
+// Forward delcaration
+class world_t;
+struct chunk_t;
+struct tile_definition_t;
 
-struct landform_weight_t
+// Configuration structures
+struct NoiseConfig
 {
-  const landform_variant_t *landform;
-  float weight;
+  float frequency;
+  int octaves;
+  float lacunarity;
+  float gain;
+  float amplitude;
+  int seed;
 };
 
-struct column_data_t
+struct Landform
 {
-  std::vector<landform_weight_t> weights;
-  float surface_noise = 0.0f;
-  float upheaval = 0.0f;
-  std::vector<double> blended_octaves;
-  std::vector<double> blended_thresholds;
-  float max_noise_amp = 0.0f;
+  std::string name;
+  float threshold; // Continental noise threshold to activate
+  float base_height;
+  float height_variance;
+  NoiseConfig noise;
 };
 
 class world_generator_t
 {
 public:
-  world_generator_t();
+  world_generator_t(world_t *world);
+  ~world_generator_t();
 
-  auto generate_chunk(int chunk_x, int chunk_y) -> std::unique_ptr<chunk_t>;
+  void load_config(const std::string &path);
 
-  static const resource_id_t AIR_ID;
-  static const resource_id_t WATER_ID;
+  // Main generate function
+  void generate_chunk(chunk_t *chunk, int chunk_x, int chunk_y);
 
 private:
-  auto init_context() -> void;
-  // returns density -1 to 1
-  auto get_density(float x, float y, float z) -> float;
-  // Optimized column density helpers
-  auto prepare_column_data(float x, float z) -> column_data_t;
-  auto get_density_from_column(float x, float y, const column_data_t &data) -> float;
+  world_t *world;
 
-  auto get_landform(float x, float y) -> const landform_variant_t *;
-  auto get_landform_weights(float x, float y, std::vector<landform_weight_t> &out_weights) -> void;
+  int global_width;
+  int global_height;
+  int sea_level;
 
-  // New: Geologic Province Constraints (Blended)
-  auto get_province_constraints(float x, float y) -> std::map<std::string, float>;
+  // FastNoise2 Generators
+  FastNoise::SmartNode<> continental_noise;
+  std::vector<FastNoise::SmartNode<>> landform_noises;
+  std::vector<Landform> landforms;
 
-  // New: Rock Strata
-  // Returns block code (e.g., "deepbound:rock-granite")
-  auto get_rock_strata(float x, float y, float density, const geologic_province_variant_t *province) -> std::string;
+  // Pre-calculated or cached noise objects if needed
+  // Actually FastNoise2 uses nodes, so we just setup a graph or separate nodes.
+  // For simplicity, we'll likely just create separate GenSimplex or Fractal nodes.
 
-  world_gen_context_t m_context;
-  fast_noise_wrapper_t m_noise;
+  // Helper to get height at x
+  float get_height_at(int x);
 
-  int m_world_height = 512;
-  int m_sea_level = 220; // Default VS logic (110/256 * 512)
-
-  // Reusable buffers for per-column generation
-  struct strata_range_t
-  {
-    std::string code;
-    int y_min, y_max;
-  };
-
-  struct cached_column_info_t
-  {
-    column_data_t data;
-    int surface_y;
-    std::vector<strata_range_t> strata_ranges;
-    std::string last_bottom_up_code;
-    float temp = 0.0f;
-    float rain = 0.0f;
-  };
-
-  // Helper method for surface layers
-  auto apply_column_surface(chunk_t *chunk, int local_x, int world_x, int world_y_base, const cached_column_info_t &col_info) -> void;
-
-  // Sharded cache to reduce mutex contention (32 shards)
-  struct column_cache_shard_t
-  {
-    std::unordered_map<int, std::shared_ptr<cached_column_info_t>> map;
-    std::mutex mutex;
-  };
-  std::array<column_cache_shard_t, 32> m_column_caches;
-
-  // Reusable buffers for per-column generation
-
-  // Climate noise
-  fast_noise_wrapper_t m_temp_noise;
-  fast_noise_wrapper_t m_rain_noise;
-
-  // Province noise
-  fast_noise_wrapper_t m_province_noise;
-
-  // Strata noise (reused for strata layers)
-  fast_noise_wrapper_t m_strata_noise;
-
-  // Upheaval noise
-  fast_noise_wrapper_t m_upheaval_noise;
-
-  bool m_initialized = false;
+  // Tiles needed
+  const tile_definition_t *stone_tile = nullptr;
+  const tile_definition_t *dirt_tile = nullptr;
+  const tile_definition_t *grass_tile = nullptr;
+  const tile_definition_t *water_tile = nullptr;
+  const tile_definition_t *air_tile = nullptr; // nullptr usually means air but let's be safe.
 };
 
 } // namespace deepbound
