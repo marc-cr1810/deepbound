@@ -6,10 +6,12 @@
 #include <iostream>
 #include <cmath>
 #include <algorithm>
+#include <random>
+#include <ctime>
 
 namespace deepbound
 {
-world_generator_t::world_generator_t(world_t *world) : world(world), global_width(80000), global_height(1024), sea_level(500)
+world_generator_t::world_generator_t(world_t *world) : world(world), global_width(80000), global_height(1024), sea_level(500), global_seed(0)
 {
   // Try to cache tiles
   auto &tile_registry = deepbound::tile_registry_t::get();
@@ -58,7 +60,26 @@ void world_generator_t::load_config(const std::string &path)
   if (j.contains("continental_noise"))
   {
     auto &cn = j["continental_noise"];
-    int seed = cn.value("seed", 1337);
+    // Check for global seed if not already set, or override
+    if (j["global"].contains("seed"))
+    {
+      global_seed = j["global"].value("seed", 0);
+    }
+
+    if (global_seed <= 0)
+    {
+      std::random_device rd;
+      std::mt19937 gen(rd());
+      std::uniform_int_distribution<> distrib(1, 2000000000);
+      global_seed = distrib(gen);
+      std::cout << "Generated Random Seed: " << global_seed << std::endl;
+    }
+    else
+    {
+      std::cout << "Using Configured Seed: " << global_seed << std::endl;
+    }
+
+    int seed = global_seed; // Use global seed
     float frequency = cn.value("frequency", 0.0005f);
     int octaves = cn.value("octaves", 4);
     float lacunarity = cn.value("lacunarity", 2.0f);
@@ -132,7 +153,9 @@ void world_generator_t::load_config(const std::string &path)
         lf.noise.lacunarity = n.value("lacunarity", 2.0f);
         lf.noise.gain = n.value("gain", 0.5f);
         lf.noise.amplitude = n.value("amplitude", 1.0f);
-        lf.noise.seed = 1337 + (int)landforms.size();
+        lf.noise.gain = n.value("gain", 0.5f);
+        lf.noise.amplitude = n.value("amplitude", 1.0f);
+        lf.noise.seed = global_seed + (int)landforms.size() + 100; // Offset seed for landforms
 
         auto signal = FastNoise::New<FastNoise::Simplex>();
         auto fractal = FastNoise::New<FastNoise::FractalFBm>();
@@ -300,7 +323,7 @@ void world_generator_t::generate_chunk(chunk_t *chunk, int chunk_x, int chunk_y)
             if (entry.max_thickness > entry.min_thickness && thickness_noise)
             {
               // Use a different seed/offset per entry to avoid correlated thickness
-              float t_noise = thickness_noise->GenSingle2D(global_x * 0.1f, (float)current_depth_limit, 444);
+              float t_noise = thickness_noise->GenSingle2D(global_x * 0.1f, (float)current_depth_limit, global_seed + 444);
               float t_val = (t_noise + 1.0f) * 0.5f;
               thickness += (int)(t_val * (entry.max_thickness - entry.min_thickness + 0.99f));
             }
@@ -348,14 +371,14 @@ std::pair<float, float> world_generator_t::get_climate_at(int x)
 
   if (temp_noise)
   {
-    float val = temp_noise->GenSingle2D(x, 0, 999); // Seed for temp
-    t = val * 30.0f + 10.0f;                        // -20 to 40 approx
+    float val = temp_noise->GenSingle2D(x, 0, global_seed + 999); // Seed for temp
+    t = val * 30.0f + 10.0f;                                      // -20 to 40 approx
   }
 
   if (rain_noise)
   {
-    float val = rain_noise->GenSingle2D(x, 0, 888); // Seed for rain
-    r = (val + 1.0f) * 0.5f * 255.0f;               // 0 to 255
+    float val = rain_noise->GenSingle2D(x, 0, global_seed + 888); // Seed for rain
+    r = (val + 1.0f) * 0.5f * 255.0f;                             // 0 to 255
   }
 
   return {t, r};
@@ -368,7 +391,7 @@ float world_generator_t::get_height_at(int x)
 
   float cont_val = 0.0f;
   if (continental_noise)
-    cont_val = continental_noise->GenSingle2D(x, 0, 1337);
+    cont_val = continental_noise->GenSingle2D(x, 0, global_seed);
 
   // Find the two landforms to blend between
   size_t i1 = 0;
@@ -408,7 +431,7 @@ float world_generator_t::get_height_at(int x)
     const auto &lf = landforms[idx];
     float noise_val = 0.0f;
     if (idx < landform_noises.size() && landform_noises[idx])
-      noise_val = landform_noises[idx]->GenSingle2D(x, 0, 1337 + idx);
+      noise_val = landform_noises[idx]->GenSingle2D(x, 0, global_seed + 1337 + idx);
     return lf.base_height + (noise_val * lf.height_variance);
   };
 

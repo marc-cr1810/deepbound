@@ -67,6 +67,7 @@ private:
   int global_width;
   int global_height;
   int sea_level;
+  int global_seed;
 
   // FastNoise2 Generators
   FastNoise::SmartNode<> continental_noise;
