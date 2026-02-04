@@ -96,6 +96,7 @@
       "threshold": 0.7,
       "base_height": 750,
       "height_variance": 150,
+      "overhang_strength": 0.5,
       "noise": {
         "frequency": 0.004,
         "octaves": 5,
@@ -109,12 +110,27 @@
       "threshold": 0.9,
       "base_height": 900,
       "height_variance": 200,
+      "overhang_strength": 0.6,
       "noise": {
         "frequency": 0.003,
         "octaves": 5,
         "lacunarity": 2.0,
         "gain": 0.5,
         "amplitude": 2.5
+      }
+    },
+    {
+      "name": "Crazy Cliffs",
+      "threshold": 0.95,
+      "base_height": 600,
+      "height_variance": 100,
+      "overhang_strength": 0.8,
+      "noise": {
+        "frequency": 0.005,
+        "octaves": 3,
+        "lacunarity": 2.0,
+        "gain": 0.5,
+        "amplitude": 1.5
       }
     }
   ]

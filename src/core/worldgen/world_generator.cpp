@@ -131,8 +131,22 @@ void world_generator_t::load_config(const std::string &path)
     rain_noise = scale;
   }
 
-  // Initialize thickness noise (Higher frequency for localized variation, but smooth)
-  thickness_noise = FastNoise::New<FastNoise::Perlin>();
+  // Initialize overhang noise (3D Simplex for structures)
+  {
+    auto signal = FastNoise::New<FastNoise::Simplex>();
+    // We want distinct structures, so standard fractal
+    auto fractal = FastNoise::New<FastNoise::FractalFBm>();
+    fractal->SetSource(signal);
+    fractal->SetOctaveCount(3);
+    fractal->SetGain(0.5f);
+    fractal->SetLacunarity(2.0f);
+
+    auto scale = FastNoise::New<FastNoise::DomainScale>();
+    scale->SetSource(fractal);
+    scale->SetScale(0.02f); // Medium frequency for overhangs/caves
+
+    overhang_noise = scale;
+  }
 
   // Landforms
   if (j.contains("landforms"))
@@ -144,6 +158,7 @@ void world_generator_t::load_config(const std::string &path)
       lf.threshold = l.value("threshold", 0.0f);
       lf.base_height = l.value("base_height", 500.0f);
       lf.height_variance = l.value("height_variance", 50.0f);
+      lf.overhang_strength = l.value("overhang_strength", 0.0f); // Load new param
 
       if (l.contains("noise"))
       {
@@ -151,8 +166,6 @@ void world_generator_t::load_config(const std::string &path)
         lf.noise.frequency = n.value("frequency", 0.01f);
         lf.noise.octaves = n.value("octaves", 3);
         lf.noise.lacunarity = n.value("lacunarity", 2.0f);
-        lf.noise.gain = n.value("gain", 0.5f);
-        lf.noise.amplitude = n.value("amplitude", 1.0f);
         lf.noise.gain = n.value("gain", 0.5f);
         lf.noise.amplitude = n.value("amplitude", 1.0f);
         lf.noise.seed = global_seed + (int)landforms.size() + 100; // Offset seed for landforms
@@ -274,14 +287,65 @@ void world_generator_t::generate_chunk(chunk_t *chunk, int chunk_x, int chunk_y)
   if (landforms.empty())
     return;
 
+  // We need to know density of neighbors to determine surface logic,
+  // but for chunk generation simplicity, we'll just check "above" within the chunk
+  // and assume connections across chunks work "okay" or are fixed in a second pass.
+  // Ideally, we'd query world, but world generation happens before insertion.
+  // For now: strictly column-based logic within the chunk for surface detection won't work well for overhangs.
+  // Better approach: Calculate density for all blocks in chunk.
+
   // Iterate over local chunk coordinates
   for (int x = 0; x < chunk_t::SIZE; x++)
   {
     int global_x = chunk_x * chunk_t::SIZE + x;
 
-    // Calculate surface height for this column
-    float surface_height = get_height_at(global_x);
+    // Calculate surface height and climate for this column (used for biome selection)
+    float surface_height = get_height_at(global_x); // The "ideal" surface height from heightmap
     auto climate = get_climate_at(global_x);
+
+    // Get overhang strength for this column
+    // We need to interpolate it just like height
+    // (Copy-paste logic from get_height_at essentially, but retrieving strength)
+    // TODO: Refactor landform blending to return a struct of properties.
+    // For now, let's just re-calculate or approximate.
+    // Optimization: Just get it from the "dominant" landform or blend again.
+    // Let's do a quick re-blend for strength:
+    float overhang_strength = 0.0f;
+    {
+      float cont_val = 0.0f;
+      if (continental_noise)
+        cont_val = continental_noise->GenSingle2D(global_x, 0, global_seed);
+      // Find blend
+      size_t i1 = 0, i2 = 0;
+      float t = 0.0f;
+      // ... (Same binary search logic) ...
+      // For brevity, assume linear scan matches get_height_at logic
+      if (cont_val <= landforms[0].threshold)
+      {
+        i1 = i2 = 0;
+        t = 0;
+      }
+      else if (cont_val >= landforms.back().threshold)
+      {
+        i1 = i2 = landforms.size() - 1;
+        t = 0;
+      }
+      else
+      {
+        for (size_t i = 0; i < landforms.size() - 1; i++)
+        {
+          if (cont_val >= landforms[i].threshold && cont_val < landforms[i + 1].threshold)
+          {
+            i1 = i;
+            i2 = i + 1;
+            float range = landforms[i2].threshold - landforms[i1].threshold;
+            t = (range > 0.0001f) ? (cont_val - landforms[i1].threshold) / range : 0;
+            break;
+          }
+        }
+      }
+      overhang_strength = landforms[i1].overhang_strength * (1.0f - t) + landforms[i2].overhang_strength * t;
+    }
 
     // Pick topsoil layer based on climate
     const BlockLayer *active_layer = nullptr;
@@ -293,75 +357,117 @@ void world_generator_t::generate_chunk(chunk_t *chunk, int chunk_x, int chunk_y)
         break;
       }
     }
-
-    // Default layer if none matched (plains-like)
     if (!active_layer && !block_layers.empty())
       active_layer = &block_layers[0];
 
     for (int y = 0; y < chunk_t::SIZE; y++)
     {
       int global_y = chunk_y * chunk_t::SIZE + y;
-
       const tile_definition_t *tile = air_tile;
 
-      if (global_y <= (int)surface_height)
+      // 1. Check Density
+      float density = get_density(global_x, global_y, surface_height, overhang_strength);
+
+      if (density > 0.0f)
       {
-        // Ground logic
-        if (active_layer)
+        // It's solid ground
+        // 2. Surface Detection
+        // A block is "surface" if the block ABOVE it has density <= 0.
+        // This allows for overhangs: you can have ground, air, ground, air.
+        // We need density at y+1.
+        float density_above = get_density(global_x, global_y + 1, surface_height, overhang_strength);
+        bool is_surface = (density_above <= 0.0f);
+
+        if (is_surface)
         {
-          int depth = (int)surface_height - global_y;
-          int current_depth_limit = 0;
-          bool placed = false;
+          // Apply Topsoil
+          // Problem: existing topsoil logic relied on "depth from surface".
+          // With 3D terrain, "depth" is harder.
+          // Simple version: If surface, use top layer tile.
+          // Better version: Trace limited depth.
+          // For now, let's just make the top block the first entry, and maybe 1-2 blocks below it?
+          // Actually, simplest "Terraria-like" logic:
+          // If Exposed -> Grass.
+          // If 1-3 blocks covered -> Dirt.
+          // Else -> Stone.
+          // We can use a recursive check or just local noise for "how deep is dirt here".
+          // Let's implement a "Dirt Depth" noise or constant (e.g., 3-5 blocks).
+          // Since we are iterating Y, we don't know "how far from surface" we are if we are deep.
+          // BUT, we can just say: If near the "Ideal Heightmap Surface" OR if is_surface...
+          // Let's stick to: Is Surface -> Top Entry.
+          // Else -> Dirt or Stone?
+          // Use density gradient?
+          // Let's assume everything is Stone, unless near surface.
 
-          bool is_submerged = surface_height < sea_level;
+          bool is_submerged = global_y < sea_level;
           const auto &entries = (is_submerged && !active_layer->submerged_entries.empty()) ? active_layer->submerged_entries : active_layer->entries;
-
-          for (const auto &entry : entries)
-          {
-            // Calculate thickness for this column using smooth noise
-            int thickness = entry.min_thickness;
-            if (entry.max_thickness > entry.min_thickness && thickness_noise)
-            {
-              // Use a different seed/offset per entry to avoid correlated thickness
-              float t_noise = thickness_noise->GenSingle2D(global_x * 0.1f, (float)current_depth_limit, global_seed + 444);
-              float t_val = (t_noise + 1.0f) * 0.5f;
-              thickness += (int)(t_val * (entry.max_thickness - entry.min_thickness + 0.99f));
-            }
-
-            current_depth_limit += thickness;
-
-            if (depth < current_depth_limit)
-            {
-              tile = deepbound::tile_registry_t::get().get_tile(resource_id_t("deepbound", entry.tile_code));
-              placed = true;
-              break;
-            }
-          }
-
-          if (!placed)
-            tile = stone_tile;
+          if (!entries.empty())
+            tile = deepbound::tile_registry_t::get().get_tile(resource_id_t("deepbound", entries[0].tile_code));
+          else
+            tile = dirt_tile;
         }
         else
         {
-          // Fallback
-          if (global_y < surface_height - 5)
+          // Underground (Solid above us)
+          // Is it Dirt or Stone?
+          // In Terraria, dirt goes down quite a bit.
+          // Let's us a simple "Depth from ideal surface" check for now, plus some noise.
+          // If we are significantly below surface_height, it's stone.
+          if (global_y < surface_height - 15) // deeply buried
+          {
             tile = stone_tile;
+          }
           else
+          {
+            // Transition zone
             tile = dirt_tile;
+          }
         }
       }
       else
       {
-        // Above ground
+        // Air (or Water)
         if (global_y < sea_level)
           tile = water_tile;
       }
 
       chunk->set_tile(x, y, tile);
-      // Store climate for rendering (tinting)
       chunk->set_climate(x, y, climate.first, climate.second);
     }
   }
+}
+
+float world_generator_t::get_density(int x, int y, float surface_height, float overhang_strength)
+{
+  // Base density: Positive below surface, negative above.
+  float density = surface_height - (float)y; // Simple linear falloff
+
+  // If overhang strength is 0, we behave exactly like heightmap (density = distance to surface)
+  // If we want overhangs, we add 3D noise.
+
+  if (overhang_strength > 0.001f && overhang_noise)
+  {
+    // internal: magnitude_check is pseudo-code, just use 'y'.
+    // 3D noise sample.
+    // We use x, y and a seed.
+    // Note: GenSingle2D is for 2D. We need 3D or just 2D with Y included.
+    // Common trick for 2D side scrollers: Use 2D noise where Y is the 2nd dimension!
+    // So GenSingle2D(x, y). Correct.
+    float noise = overhang_noise->GenSingle2D(x * 1.0f, y * 1.5f, global_seed + 12345);
+
+    // Modulate strength by depth?
+    // Usually we want more noise near the surface for overhangs, but less deep down (or maybe caves deep down).
+    // For "Overhangs", we effectively want to distort the surface.
+    // Equation: surface_height + noise * strength > y
+    // <=> surface_height - y + noise * strength > 0
+    density = (surface_height - (float)y) + (noise * overhang_strength * 40.0f); // 40.0 arbitrary scale factor for noise amp
+  }
+  else
+  {
+    density = surface_height - (float)y;
+  }
+
+  return density;
 }
 
 std::pair<float, float> world_generator_t::get_climate_at(int x)

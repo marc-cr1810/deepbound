@@ -30,6 +30,7 @@ struct Landform
   float threshold; // Continental noise threshold to activate
   float base_height;
   float height_variance;
+  float overhang_strength = 0.0f; // New: How much 3D noise affects this landform
   NoiseConfig noise;
 };
 
@@ -73,7 +74,9 @@ private:
   FastNoise::SmartNode<> continental_noise;
   FastNoise::SmartNode<> temp_noise;
   FastNoise::SmartNode<> rain_noise;
+
   FastNoise::SmartNode<> thickness_noise;
+  FastNoise::SmartNode<> overhang_noise; // New: 3D noise for overhangs
 
   std::vector<FastNoise::SmartNode<>> landform_noises;
   std::vector<Landform> landforms;
@@ -81,6 +84,9 @@ private:
 
   // Helper to get height at x
   float get_height_at(int x);
+
+  // Helper to check density at x,y. Returns > 0 if solid.
+  float get_density(int x, int y, float surface_height, float overhang_strength);
 
   // Helper to sample climate
   auto get_climate_at(int x) -> std::pair<float, float>; // temp (-50..50), rain (0..255)
