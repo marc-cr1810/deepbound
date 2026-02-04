@@ -195,6 +195,88 @@ void world_generator_t::load_config(const std::string &path)
   std::cout << "World Generator Config Loaded. " << landforms.size() << " landforms." << std::endl;
 }
 
+void world_generator_t::load_caves(const std::string &path)
+{
+  std::ifstream file(path);
+  if (!file.is_open())
+  {
+    std::cerr << "Failed to open cave config: " << path << std::endl;
+    return;
+  }
+
+  nlohmann::json j;
+  file >> j;
+
+  if (j.contains("global_min_depth"))
+  {
+    cave_config.global_min_depth = j["global_min_depth"];
+  }
+
+  if (j.contains("cheese_caves"))
+  {
+    auto &c = j["cheese_caves"];
+    cave_config.cheese_enabled = c.value("enabled", false);
+    cave_config.cheese_threshold = c.value("threshold", 0.5f);
+    cave_config.cheese_fade_depth = c.value("surface_fade_depth", 30.0f);
+
+    cave_config.cheese_noise.frequency = c.value("frequency", 0.015f);
+    cave_config.cheese_noise.octaves = c.value("octaves", 2);
+    cave_config.cheese_noise.lacunarity = c.value("lacunarity", 2.0f);
+    cave_config.cheese_noise.gain = c.value("gain", 0.5f);
+    cave_config.cheese_noise.seed = global_seed + 500;
+
+    if (cave_config.cheese_enabled)
+    {
+      auto signal = FastNoise::New<FastNoise::Simplex>(); // 3D source
+      auto fractal = FastNoise::New<FastNoise::FractalFBm>();
+      fractal->SetSource(signal);
+      fractal->SetOctaveCount(cave_config.cheese_noise.octaves);
+      fractal->SetGain(cave_config.cheese_noise.gain);
+      fractal->SetLacunarity(cave_config.cheese_noise.lacunarity);
+
+      auto scale = FastNoise::New<FastNoise::DomainScale>();
+      scale->SetSource(fractal);
+      scale->SetScale(cave_config.cheese_noise.frequency);
+
+      cheese_noise = scale;
+    }
+  }
+
+  if (j.contains("worm_caves"))
+  {
+    auto &c = j["worm_caves"];
+    cave_config.worm_enabled = c.value("enabled", false);
+    cave_config.worm_thickness = c.value("thickness", 0.08f);
+    cave_config.worm_thickness_variation = c.value("thickness_variation", 0.0f);
+    cave_config.worm_fade_depth = c.value("surface_fade_depth", 40.0f);
+
+    cave_config.worm_noise.frequency = c.value("frequency", 0.02f);
+    cave_config.worm_noise.octaves = c.value("octaves", 1);
+    cave_config.worm_noise.lacunarity = c.value("lacunarity", 2.0f);
+    cave_config.worm_noise.gain = c.value("gain", 0.5f);
+    cave_config.worm_noise.seed = global_seed + 600;
+
+    if (cave_config.worm_enabled)
+    {
+      // Worm tunnels needs Ridged Multi
+      auto signal = FastNoise::New<FastNoise::Simplex>();
+      auto fractal = FastNoise::New<FastNoise::FractalRidged>(); // Ridged!
+      fractal->SetSource(signal);
+      fractal->SetOctaveCount(cave_config.worm_noise.octaves);
+      fractal->SetGain(cave_config.worm_noise.gain);
+      fractal->SetLacunarity(cave_config.worm_noise.lacunarity);
+
+      auto scale = FastNoise::New<FastNoise::DomainScale>();
+      scale->SetSource(fractal);
+      scale->SetScale(cave_config.worm_noise.frequency);
+
+      worm_noise = scale;
+    }
+  }
+
+  std::cout << "Cave Config Loaded." << std::endl;
+}
+
 void world_generator_t::load_block_layers(const std::string &path)
 {
   std::ifstream file(path);
@@ -280,6 +362,20 @@ void world_generator_t::load_block_layers(const std::string &path)
   }
 
   std::cout << "Block Layers Loaded. " << block_layers.size() << " layers." << std::endl;
+
+  // Initialize strata noise for smooth layer variations
+  auto source = FastNoise::New<FastNoise::Simplex>();
+  auto fractal = FastNoise::New<FastNoise::FractalFBm>();
+  fractal->SetSource(source);
+  fractal->SetOctaveCount(2);
+  fractal->SetGain(0.5f);
+  fractal->SetLacunarity(2.0f);
+
+  auto scale = FastNoise::New<FastNoise::DomainScale>();
+  scale->SetSource(fractal);
+  scale->SetScale(0.02f); // Low frequency for long, smooth variations
+
+  strata_noise = scale;
 }
 
 void world_generator_t::generate_chunk(chunk_t *chunk, int chunk_x, int chunk_y)
@@ -365,70 +461,142 @@ void world_generator_t::generate_chunk(chunk_t *chunk, int chunk_x, int chunk_y)
       int global_y = chunk_y * chunk_t::SIZE + y;
       const tile_definition_t *tile = air_tile;
 
-      // 1. Check Density
-      float density = get_density(global_x, global_y, surface_height, overhang_strength);
-
-      if (density > 0.0f)
+      // 1. Calculate Densities
+      float base_density = get_base_density(global_x, global_y, surface_height, overhang_strength);
+      float final_density = base_density;
+      if (base_density > 0.0f)
       {
-        // It's solid ground
-        // 2. Surface Detection
-        // A block is "surface" if the block ABOVE it has density <= 0.
-        // This allows for overhangs: you can have ground, air, ground, air.
-        // We need density at y+1.
-        float density_above = get_density(global_x, global_y + 1, surface_height, overhang_strength);
-        bool is_surface = (density_above <= 0.0f);
+        float cave_mod = get_cave_density_modifier(global_x, global_y, surface_height);
+        final_density += cave_mod;
+      }
+      // 2. Tile Decision Logic
+      if (final_density > 0.0f)
+      {
+        // We are solid.
+        bool is_exposed = false;
+        bool is_natural_exposure = false;
 
-        if (is_surface)
+        // Check above
+        float base_density_above = get_base_density(global_x, global_y + 1, surface_height, overhang_strength);
+        float cave_mod_above = 0.0f;
+        if (base_density_above > 0.0f)
+          cave_mod_above = get_cave_density_modifier(global_x, global_y + 1, surface_height);
+        float final_density_above = base_density_above + cave_mod_above;
+
+        if (final_density_above <= 0.0f)
         {
-          // Apply Topsoil
-          // Problem: existing topsoil logic relied on "depth from surface".
-          // With 3D terrain, "depth" is harder.
-          // Simple version: If surface, use top layer tile.
-          // Better version: Trace limited depth.
-          // For now, let's just make the top block the first entry, and maybe 1-2 blocks below it?
-          // Actually, simplest "Terraria-like" logic:
-          // If Exposed -> Grass.
-          // If 1-3 blocks covered -> Dirt.
-          // Else -> Stone.
-          // We can use a recursive check or just local noise for "how deep is dirt here".
-          // Let's implement a "Dirt Depth" noise or constant (e.g., 3-5 blocks).
-          // Since we are iterating Y, we don't know "how far from surface" we are if we are deep.
-          // BUT, we can just say: If near the "Ideal Heightmap Surface" OR if is_surface...
-          // Let's stick to: Is Surface -> Top Entry.
-          // Else -> Dirt or Stone?
-          // Use density gradient?
-          // Let's assume everything is Stone, unless near surface.
-
-          bool is_submerged = global_y < sea_level;
-          const auto &entries = (is_submerged && !active_layer->submerged_entries.empty()) ? active_layer->submerged_entries : active_layer->entries;
-          if (!entries.empty())
-            tile = deepbound::tile_registry_t::get().get_tile(resource_id_t("deepbound", entries[0].tile_code));
-          else
-            tile = dirt_tile;
+          is_exposed = true;
+          // Natural exposure if it wasn't carved out.
+          // i.e. base density alone was already air.
+          if (base_density_above <= 0.0f)
+            is_natural_exposure = true;
         }
-        else
+
+        // Block Layer Selection
+        // Determine "Depth" into the terrain.
+        // Approximation: surface_height - y.
+        // But for overhangs, we want local depth. Local depth is hard.
+        // We will use the macro surface height for the "Soil/Stone" transition.
+        // If we are significantly above surface height (overhang), we assume Dirt/Grass composition.
+
+        int depth = (int)(surface_height - (float)global_y);
+        if (depth < 0)
+          depth = 0; // Treat hills/overhangs as "Surface level" crust
+
+        // Find which entry applies
+        // Default to Stone (or last entry)
+        tile = stone_tile;
+
+        if (active_layer && !active_layer->entries.empty())
         {
-          // Underground (Solid above us)
-          // Is it Dirt or Stone?
-          // In Terraria, dirt goes down quite a bit.
-          // Let's us a simple "Depth from ideal surface" check for now, plus some noise.
-          // If we are significantly below surface_height, it's stone.
-          if (global_y < surface_height - 15) // deeply buried
+          int current_depth = 0;
+          bool found = false;
+
+          // Check if we are in the "Soil" layers
+          for (size_t i = 0; i < active_layer->entries.size(); i++)
           {
-            tile = stone_tile;
+            const auto &entry = active_layer->entries[i];
+            // Use max_thickness for now, or randomize between min/max using X/Y hash?
+            // Let's use max for consistency, or average.
+            // Smooth randomness using noise
+            // Use strata_noise. If not initialized, fallback to hash.
+            int thickness = entry.max_thickness;
+            if (entry.min_thickness != entry.max_thickness)
+            {
+              float t = 0.5f;
+              if (strata_noise)
+              {
+                // Use different Seed per layer depth to decorrelate layers?
+                // Or just X + depth offset.
+                float n = strata_noise->GenSingle2D(global_x * 1.0f, current_depth * 100.0f, global_seed + 555);
+                t = (n + 1.0f) * 0.5f; // -1..1 -> 0..1
+              }
+              else
+              {
+                // Fallback hash
+                int h = (global_x * 73856093) ^ (global_seed);
+                t = (float)(std::abs(h) % 100) / 100.0f;
+              }
+              thickness = entry.min_thickness + (int)(t * (entry.max_thickness - entry.min_thickness)); // truncate
+            }
+
+            if (depth < current_depth + thickness)
+            {
+              // Matched this layer
+              if (i == 0) // Top Layer (Grass)
+              {
+                if (is_exposed && is_natural_exposure)
+                {
+                  tile = deepbound::tile_registry_t::get().get_tile(resource_id_t("deepbound", entry.tile_code));
+                }
+                else
+                {
+                  // We are covered, OR we are a cave floor.
+                  // Fallthrough to next layer (Dirt) if possible.
+                  if (i + 1 < active_layer->entries.size())
+                  {
+                    tile = deepbound::tile_registry_t::get().get_tile(resource_id_t("deepbound", active_layer->entries[i + 1].tile_code));
+                  }
+                  else
+                  {
+                    // No next layer, just use this one? Or Stone?
+                    // Usually dirt.
+                    tile = deepbound::tile_registry_t::get().get_tile(resource_id_t("deepbound", entry.tile_code));
+                    // If "Grass" is used underground, it usually turns to dirt in game logic, but here we just place tile.
+                    // We probably shouldn't place Grass underground.
+                    // Hardcoded fallback to dirt if we don't have a lookup?
+                    // For now, assume Entry 1 exists if Entry 0 exists.
+                  }
+                }
+              }
+              else
+              {
+                // Regular layer (Dirt, Clay, etc.)
+                tile = deepbound::tile_registry_t::get().get_tile(resource_id_t("deepbound", entry.tile_code));
+              }
+              found = true;
+              break;
+            }
+            current_depth += thickness;
           }
-          else
+
+          if (!found)
           {
-            // Transition zone
-            tile = dirt_tile;
+            // Deeper than all defined layers -> Stone
+            tile = stone_tile;
           }
         }
       }
       else
       {
-        // Air (or Water)
+        // Air/Water
         if (global_y < sea_level)
-          tile = water_tile;
+        {
+          if (base_density <= 0.0f)
+            tile = water_tile;
+          else
+            tile = air_tile;
+        }
       }
 
       chunk->set_tile(x, y, tile);
@@ -437,7 +605,17 @@ void world_generator_t::generate_chunk(chunk_t *chunk, int chunk_x, int chunk_y)
   }
 }
 
-float world_generator_t::get_density(int x, int y, float surface_height, float overhang_strength)
+float world_generator_t::get_density_final(int x, int y, float surface_height, float overhang_strength)
+{
+  float base = get_base_density(x, y, surface_height, overhang_strength);
+  if (base <= 0.0f)
+    return base; // Already air
+
+  float modification = get_cave_density_modifier(x, y, surface_height);
+  return base + modification; // Modification should be negative to carve
+}
+
+float world_generator_t::get_base_density(int x, int y, float surface_height, float overhang_strength)
 {
   // Base density: Positive below surface, negative above.
   float density = surface_height - (float)y; // Simple linear falloff
@@ -447,27 +625,81 @@ float world_generator_t::get_density(int x, int y, float surface_height, float o
 
   if (overhang_strength > 0.001f && overhang_noise)
   {
-    // internal: magnitude_check is pseudo-code, just use 'y'.
     // 3D noise sample.
-    // We use x, y and a seed.
-    // Note: GenSingle2D is for 2D. We need 3D or just 2D with Y included.
-    // Common trick for 2D side scrollers: Use 2D noise where Y is the 2nd dimension!
-    // So GenSingle2D(x, y). Correct.
     float noise = overhang_noise->GenSingle2D(x * 1.0f, y * 1.5f, global_seed + 12345);
 
-    // Modulate strength by depth?
-    // Usually we want more noise near the surface for overhangs, but less deep down (or maybe caves deep down).
-    // For "Overhangs", we effectively want to distort the surface.
     // Equation: surface_height + noise * strength > y
-    // <=> surface_height - y + noise * strength > 0
     density = (surface_height - (float)y) + (noise * overhang_strength * 40.0f); // 40.0 arbitrary scale factor for noise amp
-  }
-  else
-  {
-    density = surface_height - (float)y;
   }
 
   return density;
+}
+
+float world_generator_t::get_cave_density_modifier(int x, int y, float surface_height)
+{
+  float depth = surface_height - (float)y;
+  if (depth < cave_config.global_min_depth)
+    return 0.0f; // Too close to surface, no caves
+
+  float cave_mod = 0.0f;
+
+  // 1. Cheese Caves (Large open areas)
+  if (cave_config.cheese_enabled && cheese_noise)
+  {
+    // Use 3D noise (x, y, seed)
+    float n = cheese_noise->GenSingle2D(x * 1.0f, y * 1.0f, cave_config.cheese_noise.seed);
+
+    // Fade in near surface
+    float fade = 1.0f;
+    if (depth < cave_config.cheese_fade_depth)
+    {
+      fade = (depth - (float)cave_config.global_min_depth) / (cave_config.cheese_fade_depth - (float)cave_config.global_min_depth);
+      fade = std::max(0.0f, std::min(1.0f, fade));
+    }
+
+    if (n > cave_config.cheese_threshold)
+    {
+      // Carve!
+      // We return negative density.
+      // If n is 0.6 and threshold is 0.5, we want to carve.
+      // Larger n = more open.
+      cave_mod -= (n - cave_config.cheese_threshold) * 1000.0f * fade; // Big negative number to ensure carving
+    }
+  }
+
+  // 2. Worm Caves (Tunnels)
+  if (cave_config.worm_enabled && worm_noise)
+  {
+    float n = worm_noise->GenSingle2D(x * 1.0f, y * 1.0f, cave_config.worm_noise.seed);
+    // Ridged noise: -1 to 1. Val close to 1 is "ridge" usually? Or 0?
+    // Standard ridged: 1 - abs(noise). Peaks are at 0 (or 1 depending on impl).
+    // FastNoise FractalRidged usually returns peaks at 1.0.
+    // Let's assume high values are tunnels.
+
+    float fade = 1.0f;
+    if (depth < cave_config.worm_fade_depth)
+    {
+      fade = (depth - (float)cave_config.global_min_depth) / (cave_config.worm_fade_depth - (float)cave_config.global_min_depth);
+      fade = std::max(0.0f, std::min(1.0f, fade));
+    }
+
+    // Dynamic thickness
+    float thickness = cave_config.worm_thickness;
+    if (cave_config.worm_thickness_variation > 0.001f && overhang_noise)
+    {
+      // Reuse overhang noise (3D) for variation.
+      // Offset coordinates to de-correlate from actual overhangs/terrain
+      float var = overhang_noise->GenSingle2D(x * 1.0f + 500.0f, y * 1.5f + 500.0f, global_seed + 999);
+      thickness += var * cave_config.worm_thickness_variation;
+    }
+
+    if (n > (1.0f - thickness))
+    {
+      cave_mod -= 1000.0f * fade;
+    }
+  }
+
+  return cave_mod;
 }
 
 std::pair<float, float> world_generator_t::get_climate_at(int x)

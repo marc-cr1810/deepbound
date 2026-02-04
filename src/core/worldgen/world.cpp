@@ -13,6 +13,7 @@ world_t::world_t()
   // Load config relative to executable or known path
   generator->load_config("assets/worldgen/landforms.json");
   generator->load_block_layers("assets/worldgen/blocklayers.json");
+  generator->load_caves("assets/worldgen/caves.json");
 
   // Pre-generate some chunks around user spawn?
   // Let's just generate the origin (0,0) chunk for now to verify.

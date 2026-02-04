@@ -50,6 +50,24 @@ struct BlockLayer
   std::vector<BlockLayerEntry> submerged_entries;
 };
 
+struct CaveConfig
+{
+  // Cheese (Large Caverns)
+  bool cheese_enabled = false;
+  NoiseConfig cheese_noise;
+  float cheese_threshold = 0.5f;
+  float cheese_fade_depth = 30.0f;
+
+  // Worm (Tunnels)
+  bool worm_enabled = false;
+  NoiseConfig worm_noise;
+  float worm_thickness = 0.08f;
+  float worm_thickness_variation = 0.0f;
+  float worm_fade_depth = 40.0f;
+
+  int global_min_depth = 20;
+};
+
 class world_generator_t
 {
 public:
@@ -58,6 +76,7 @@ public:
 
   void load_config(const std::string &path);
   void load_block_layers(const std::string &path);
+  void load_caves(const std::string &path);
 
   // Main generate function
   void generate_chunk(chunk_t *chunk, int chunk_x, int chunk_y);
@@ -78,15 +97,25 @@ private:
   FastNoise::SmartNode<> thickness_noise;
   FastNoise::SmartNode<> overhang_noise; // New: 3D noise for overhangs
 
+  FastNoise::SmartNode<> cheese_noise;
+  FastNoise::SmartNode<> worm_noise;
+  FastNoise::SmartNode<> strata_noise; // generic noise for varying layer thickness
+
   std::vector<FastNoise::SmartNode<>> landform_noises;
   std::vector<Landform> landforms;
   std::vector<BlockLayer> block_layers;
+  CaveConfig cave_config;
 
   // Helper to get height at x
   float get_height_at(int x);
 
   // Helper to check density at x,y. Returns > 0 if solid.
-  float get_density(int x, int y, float surface_height, float overhang_strength);
+  // Updated to include cave carving
+  float get_density_final(int x, int y, float surface_height, float overhang_strength);
+
+  // Internal helpers
+  float get_base_density(int x, int y, float surface_height, float overhang_strength);
+  float get_cave_density_modifier(int x, int y, float surface_height);
 
   // Helper to sample climate
   auto get_climate_at(int x) -> std::pair<float, float>; // temp (-50..50), rain (0..255)

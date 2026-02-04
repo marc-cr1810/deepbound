@@ -1,0 +1,22 @@
+{
+  "global_min_depth": 20,
+  "cheese_caves": {
+    "enabled": true,
+    "frequency": 0.015,
+    "octaves": 2,
+    "lacunarity": 2.0,
+    "gain": 0.5,
+    "threshold": 0.5,
+    "surface_fade_depth": 30
+  },
+  "worm_caves": {
+    "enabled": true,
+    "frequency": 0.02,
+    "octaves": 1,
+    "lacunarity": 2.0,
+    "gain": 0.5,
+    "thickness": 0.25,
+    "thickness_variation": 0.05,
+    "surface_fade_depth": 40
+  }
+}
