@@ -306,6 +306,24 @@ void world_generator_t::load_provinces(const std::string &path)
         std::cout << "Warning: Could not resolve deep stone tile '" << prov.deep_stone_code << "' for province '" << prov.name << "'" << std::endl;
       }
 
+      if (p.contains("layers"))
+      {
+        for (const auto &l : p["layers"])
+        {
+          ProvinceLayer layer;
+          layer.tile_code = l.value("tile", "rock-granite");
+          layer.type = l.value("type", "blob"); // blob, layer
+          layer.frequency = l.value("frequency", 0.05f);
+          layer.threshold = l.value("threshold", 0.6f);
+          layer.resolved_tile = deepbound::tile_registry_t::get().get_tile(resource_id_t("deepbound", layer.tile_code));
+
+          if (!layer.resolved_tile)
+            std::cout << "Warning: Could not resolve mix tile '" << layer.tile_code << "' for province '" << prov.name << "'" << std::endl;
+
+          prov.layers.push_back(layer);
+        }
+      }
+
       provinces.push_back(prov);
     }
   }
@@ -331,6 +349,22 @@ void world_generator_t::load_provinces(const std::string &path)
   scale->SetScale(frequency);
 
   province_noise = scale;
+
+  // Mix Noise (3D Simplex High Freq)
+  {
+    auto m_signal = FastNoise::New<FastNoise::Simplex>();
+    auto m_fractal = FastNoise::New<FastNoise::FractalFBm>();
+    m_fractal->SetSource(m_signal);
+    m_fractal->SetOctaveCount(2);
+    m_fractal->SetGain(0.5f);
+    m_fractal->SetLacunarity(2.0f);
+
+    auto m_scale = FastNoise::New<FastNoise::DomainScale>();
+    m_scale->SetSource(m_fractal);
+    m_scale->SetScale(0.05f); // Default mix scale
+
+    province_mix_noise = m_scale;
+  }
 
   std::cout << "Province Config Loaded. " << provinces.size() << " provinces." << std::endl;
 }
@@ -468,6 +502,7 @@ void world_generator_t::generate_chunk(chunk_t *chunk, int chunk_x, int chunk_y)
   std::vector<float> cheese_map_buf(SIZE * SIZE);
   std::vector<float> worm_map_buf(SIZE * SIZE);
   std::vector<float> province_map_buf(SIZE * SIZE);
+  std::vector<float> province_mix_map_buf(SIZE * SIZE);
   std::vector<float> strata_map_buf(SIZE * SIZE);
 
   std::vector<float> continental_map_buf(SIZE);
@@ -577,6 +612,9 @@ void world_generator_t::generate_chunk(chunk_t *chunk, int chunk_x, int chunk_y)
   if (!provinces.empty() && province_noise)
     province_noise->GenUniformGrid2D(province_map_buf.data(), global_x_start, global_y_start, SIZE, SIZE, 1.0f, global_seed + 9999);
 
+  if (province_mix_noise)
+    province_mix_noise->GenUniformGrid2D(province_mix_map_buf.data(), global_x_start, global_y_start, SIZE, SIZE, 1.0f, global_seed + 777);
+
   if (strata_noise)
     strata_noise->GenUniformGrid2D(strata_map_buf.data(), global_x_start, global_y_start, SIZE, SIZE, 1.0f, global_seed + 111);
 
@@ -601,6 +639,7 @@ void world_generator_t::generate_chunk(chunk_t *chunk, int chunk_x, int chunk_y)
       float noise_cheese_val = cheese_map_buf[buf_idx];
       float noise_worm_val = worm_map_buf[buf_idx];
       float noise_province_val = province_map_buf[buf_idx];
+      float noise_mix_val = province_mix_map_buf[buf_idx];
       float noise_strata_val = strata_map_buf[buf_idx];
 
       const tile_definition_t *tile = air_tile;
@@ -720,6 +759,89 @@ void world_generator_t::generate_chunk(chunk_t *chunk, int chunk_x, int chunk_y)
           // Use CACHED tile
           if (provinces[p_idx].resolved_tile)
             deep_stone = provinces[p_idx].resolved_tile;
+
+          // Check Mixtures/Layers
+          const auto &prov = provinces[p_idx];
+          for (const auto &layer : prov.layers)
+          {
+            if (!layer.resolved_tile)
+              continue;
+
+            bool applies = false;
+            if (layer.type == "blob")
+            {
+              // Use mix noise (3D-ish, but here projected 2D from same buffer? No, GenUniformGrid2D generates XY plane)
+              // We effectively have 2D noise in the buffer.
+              // For TRUE 3D blobs we need distinct Y sampling or a 3D buffer.
+              // Current architecture generates 2D buffers per chunk (which is 2D vertical slice? No, chunk_t is 32x32?)
+              // Chunk is likely 32x32 blocks?
+              // Wait, check generate_chunk signature: chunk_x, chunk_y.
+              // If this is a side-view 2D game (Terraria-like), then X and Y are world coordinates.
+              // The GenUniformGrid2D is called with (global_x_start, global_y_start).
+              // So "province_mix_map_buf" DOES contain unique noise for this X,Y block.
+              // So noise_mix_val IS effectively coherent 2D noise for this pixel. Perfect.
+
+              // However, we might want different seeds for different layers?
+              // For simplicity, we stick to one master mix noise for now, using thresholds.
+              // Or we could offset the value based on layer index: sin(val + index) etc.
+
+              // Simple Threshold:
+              float n = noise_mix_val;
+              // To avoid all layers appearing in same spot, offset noise by layer index
+              // Cheap offset:
+              n = std::fmod(n + (float)(&layer - &prov.layers[0]) * 0.31f, 1.0f);
+              if (n > layer.threshold)
+                applies = true;
+            }
+            else if (layer.type == "layer" || layer.type == "strata")
+            {
+              // Y-dependent mixing.
+              // Use strata noise (low freq) + local Y
+              // A layer typically appears at certain depths or repeating intervals.
+              // Let's do repeating intervals for "banding"
+              // band = sin(y * freq + noise)
+              float band = std::sin((float)global_y * 0.1f * layer.frequency + noise_strata_val * 4.0f);
+              if (band > layer.threshold)
+                applies = true;
+            }
+            else if (layer.type == "vein") // Rare veins
+            {
+              float n = std::sin(noise_mix_val * 10.0f + (float)global_y * 0.1f);
+              if (n > layer.threshold + 0.2f)
+                applies = true;
+            }
+            else if (layer.type == "dyke") // Vertical intrusions
+            {
+              // X-dependent noise. We need to create vertical bands.
+              // Band = sin(x * freq + noise)
+              // Use noise_mix_val (which is xy) to distort the bands so they aren't perfect lines.
+              float band = std::sin((float)global_x * 0.1f * layer.frequency + noise_mix_val * 2.0f);
+              // Sharp threshold for dykes
+              if (band > layer.threshold)
+                applies = true;
+            }
+            else if (layer.type == "crust") // Surface coating
+            {
+              // Depth dependent
+              if (depth < (int)(layer.frequency * 100.0f)) // Reuse frequency as depth scale (0.1 = 10 blocks, etc.)
+              {
+                // Optional noise breakup
+                if (noise_mix_val > layer.threshold)
+                  applies = true;
+              }
+            }
+
+            if (applies)
+            {
+              deep_stone = layer.resolved_tile;
+              // Don't break? Or break?
+              // If we don't break, subsequent layers generate "on top".
+              // Let's break to keep it simple order-based priority.
+              // break;
+              // Actually, "layers" should probably override "blobs"?
+              // If we iterate array order, last one wins.
+            }
+          }
         }
 
         tile = deep_stone;

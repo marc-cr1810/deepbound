@@ -1,24 +1,159 @@
 {
   "provinces": [
     {
-      "name": "Igneous",
-      "deep_stone": "rock-granite"
+      "name": "Igneous Pluton",
+      "deep_stone": "rock-granite",
+      "layers": [
+        {
+          "tile": "rock-andesite",
+          "type": "blob",
+          "frequency": 0.05,
+          "threshold": 0.55
+        },
+        {
+          "tile": "rock-kimberlite",
+          "type": "vein",
+          "frequency": 0.1,
+          "threshold": 0.7
+        },
+        {
+          "tile": "rock-conglomerate",
+          "type": "dyke",
+          "frequency": 2.0,
+          "threshold": 0.85
+        }
+      ]
     },
     {
-      "name": "Volcanic",
-      "deep_stone": "rock-basalt"
+      "name": "Volcanic Field",
+      "deep_stone": "rock-basalt",
+      "layers": [
+        {
+          "tile": "rock-scoria",
+          "type": "crust",
+          "frequency": 0.15,
+          "threshold": 0.3
+        },
+        {
+          "tile": "rock-tuff",
+          "type": "blob",
+          "threshold": 0.5
+        },
+        {
+          "tile": "rock-obsidian",
+          "type": "vein",
+          "threshold": 0.6
+        }
+      ]
     },
     {
-      "name": "Sedimentary",
-      "deep_stone": "rock-sandstone"
+      "name": "Sedimentary Basin",
+      "deep_stone": "rock-sandstone",
+      "layers": [
+        {
+          "tile": "rock-limestone",
+          "type": "strata",
+          "frequency": 0.2,
+          "threshold": 0.3
+        },
+        {
+          "tile": "rock-shale",
+          "type": "strata",
+          "frequency": 0.5,
+          "threshold": 0.4
+        },
+        {
+          "tile": "rock-claystone",
+          "type": "strata",
+          "frequency": 0.3,
+          "threshold": 0.5
+        }
+      ]
     },
     {
-      "name": "Chalky",
-      "deep_stone": "rock-chalk"
+      "name": "Bombarded Crust",
+      "deep_stone": "rock-suevite",
+      "layers": [
+        {
+          "tile": "rock-meteorite-iron",
+          "type": "vein",
+          "frequency": 0.2,
+          "threshold": 0.75
+        },
+        {
+          "tile": "rock-obsidian",
+          "type": "blob",
+          "threshold": 0.65
+        },
+        {
+          "tile": "rock-gravel-basalt",
+          "type": "crust",
+          "frequency": 0.05,
+          "threshold": 0.0
+        }
+      ]
     },
     {
-      "name": "Metamorphic",
-      "deep_stone": "rock-slate"
+      "name": "Sulfuric Flats",
+      "deep_stone": "rock-basalt",
+      "layers": [
+        {
+          "tile": "rock-sulfur",
+          "type": "blob",
+          "threshold": 0.55
+        },
+        {
+          "tile": "rock-scoria",
+          "type": "crust",
+          "frequency": 0.2,
+          "threshold": 0.0
+        },
+        {
+          "tile": "rock-chert",
+          "type": "blob",
+          "threshold": 0.7
+        }
+      ]
+    },
+    {
+      "name": "Metamorphic Shield",
+      "deep_stone": "rock-slate",
+      "layers": [
+        {
+          "tile": "rock-phyllite",
+          "type": "blob",
+          "threshold": 0.5
+        },
+        {
+          "tile": "rock-greenmarble",
+          "type": "dyke",
+          "frequency": 1.5,
+          "threshold": 0.8
+        },
+        {
+          "tile": "rock-redmarble",
+          "type": "dyke",
+          "frequency": 1.5,
+          "threshold": 0.8
+        }
+      ]
+    },
+    {
+      "name": "Chalk Basin",
+      "deep_stone": "rock-chalk",
+      "layers": [
+        {
+          "tile": "rock-chert",
+          "type": "blob",
+          "threshold": 0.7
+        },
+        {
+          "tile": "rock-limestone",
+          "type": "strata",
+          "frequency": 0.1,
+          "threshold": 0.0
+        }
+      ]
     }
   ],
   "noise": {

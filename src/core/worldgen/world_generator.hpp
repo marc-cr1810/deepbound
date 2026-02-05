@@ -69,12 +69,21 @@ struct CaveConfig
   int global_min_depth = 20;
 };
 
+struct ProvinceLayer
+{
+  std::string tile_code;
+  const tile_definition_t *resolved_tile = nullptr;
+  std::string type;        // "blob", "layer", "vein"
+  float frequency = 0.05f; // For noise
+  float threshold = 0.6f;  // Noise threshold
+};
+
 struct GeologicalProvince
 {
   std::string name;
   std::string deep_stone_code;
   const tile_definition_t *resolved_tile = nullptr;
-  // Could add specific ore probabilities here later
+  std::vector<ProvinceLayer> layers;
 };
 
 class world_generator_t
@@ -109,8 +118,9 @@ private:
 
   FastNoise::SmartNode<> cheese_noise;
   FastNoise::SmartNode<> worm_noise;
-  FastNoise::SmartNode<> strata_noise;   // generic noise for varying layer thickness
-  FastNoise::SmartNode<> province_noise; // Noise for province selection
+  FastNoise::SmartNode<> strata_noise;       // generic noise for varying layer thickness
+  FastNoise::SmartNode<> province_noise;     // Noise for province selection
+  FastNoise::SmartNode<> province_mix_noise; // Noise for mixing stones within provinces
 
   std::vector<FastNoise::SmartNode<>> landform_noises;
   std::vector<Landform> landforms;
