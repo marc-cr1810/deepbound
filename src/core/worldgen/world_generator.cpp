@@ -275,6 +275,64 @@ void world_generator_t::load_caves(const std::string &path)
   }
 
   std::cout << "Cave Config Loaded." << std::endl;
+  std::cout << "Cave Config Loaded." << std::endl;
+}
+
+void world_generator_t::load_provinces(const std::string &path)
+{
+  std::ifstream file(path);
+  if (!file.is_open())
+  {
+    std::cerr << "Failed to open province config: " << path << std::endl;
+    return;
+  }
+
+  nlohmann::json j;
+  file >> j;
+
+  if (j.contains("provinces"))
+  {
+    provinces.clear();
+    for (const auto &p : j["provinces"])
+    {
+      GeologicalProvince prov;
+      prov.name = p.value("name", "Unknown");
+      prov.deep_stone_code = p.value("deep_stone", "rock-granite");
+
+      // Resolve tile immediately
+      prov.resolved_tile = deepbound::tile_registry_t::get().get_tile(resource_id_t("deepbound", prov.deep_stone_code));
+      if (!prov.resolved_tile)
+      {
+        std::cout << "Warning: Could not resolve deep stone tile '" << prov.deep_stone_code << "' for province '" << prov.name << "'" << std::endl;
+      }
+
+      provinces.push_back(prov);
+    }
+  }
+
+  // Province Noise Setup
+  float frequency = 0.0005f;
+  int seed_offset = 9999;
+  if (j.contains("noise"))
+  {
+    frequency = j["noise"].value("frequency", 0.0005f);
+    seed_offset = j["noise"].value("seed_offset", 9999);
+  }
+
+  auto signal = FastNoise::New<FastNoise::Simplex>();
+  auto fractal = FastNoise::New<FastNoise::FractalFBm>();
+  fractal->SetSource(signal);
+  fractal->SetOctaveCount(2);
+  fractal->SetGain(0.5f);
+  fractal->SetLacunarity(2.0f);
+
+  auto scale = FastNoise::New<FastNoise::DomainScale>();
+  scale->SetSource(fractal);
+  scale->SetScale(frequency);
+
+  province_noise = scale;
+
+  std::cout << "Province Config Loaded. " << provinces.size() << " provinces." << std::endl;
 }
 
 void world_generator_t::load_block_layers(const std::string &path)
@@ -326,6 +384,17 @@ void world_generator_t::load_block_layers(const std::string &path)
           }
 
           layer.entries.push_back(entry);
+
+          // Resolve tile
+          layer.entries.back().resolved_tile = deepbound::tile_registry_t::get().get_tile(resource_id_t("deepbound", entry.tile_code));
+          if (!layer.entries.back().resolved_tile)
+          {
+            // Try to find it, might be valid to be null if it's air?
+            // But usually air is "air" code.
+            // Warning only if not air
+            if (entry.tile_code != "air")
+              std::cout << "Warning: Could not resolve tile '" << entry.tile_code << "' for layer '" << layer.name << "'" << std::endl;
+          }
         }
       }
 
@@ -354,6 +423,9 @@ void world_generator_t::load_block_layers(const std::string &path)
           }
 
           layer.submerged_entries.push_back(entry);
+
+          // Resolve tile
+          layer.submerged_entries.back().resolved_tile = deepbound::tile_registry_t::get().get_tile(resource_id_t("deepbound", entry.tile_code));
         }
       }
 
@@ -378,76 +450,109 @@ void world_generator_t::load_block_layers(const std::string &path)
   strata_noise = scale;
 }
 
+// Optimization: Batch noise generation
+// Optimization: Batch noise generation + Column Caching + Loop Interchange
 void world_generator_t::generate_chunk(chunk_t *chunk, int chunk_x, int chunk_y)
 {
   if (landforms.empty())
     return;
 
-  // We need to know density of neighbors to determine surface logic,
-  // but for chunk generation simplicity, we'll just check "above" within the chunk
-  // and assume connections across chunks work "okay" or are fixed in a second pass.
-  // Ideally, we'd query world, but world generation happens before insertion.
-  // For now: strictly column-based logic within the chunk for surface detection won't work well for overhangs.
-  // Better approach: Calculate density for all blocks in chunk.
+  // Constants
+  const int SIZE = chunk_t::SIZE;
+  const int global_x_start = chunk_x * SIZE;
+  const int global_y_start = chunk_y * SIZE;
 
-  // Iterate over local chunk coordinates
-  for (int x = 0; x < chunk_t::SIZE; x++)
+  // 1. Prepare Local Buffers (Stateless/Thread-Safe)
+  // We use std::vector for safety/simplicity
+  std::vector<float> overhang_map_buf(SIZE * SIZE);
+  std::vector<float> cheese_map_buf(SIZE * SIZE);
+  std::vector<float> worm_map_buf(SIZE * SIZE);
+  std::vector<float> province_map_buf(SIZE * SIZE);
+  std::vector<float> strata_map_buf(SIZE * SIZE);
+
+  std::vector<float> continental_map_buf(SIZE);
+  std::vector<float> temp_map_buf(SIZE);
+  std::vector<float> rain_map_buf(SIZE);
+
+  std::vector<float> cached_surface_height(SIZE);
+  std::vector<float> cached_overhang_strength(SIZE);
+  std::vector<std::pair<float, float>> cached_climate(SIZE);
+  std::vector<const BlockLayer *> cached_active_layer(SIZE);
+
+  // 2. Generate Column Data (Stateless) --------------------------------------
+
+  // Generate Column Noise
+  if (continental_noise)
+    continental_noise->GenUniformGrid2D(continental_map_buf.data(), global_x_start, 0, SIZE, 1, 1.0f, global_seed);
+
+  if (temp_noise)
+    temp_noise->GenUniformGrid2D(temp_map_buf.data(), global_x_start, 0, SIZE, 1, 1.0f, global_seed + 999);
+
+  if (rain_noise)
+    rain_noise->GenUniformGrid2D(rain_map_buf.data(), global_x_start, 0, SIZE, 1, 1.0f, global_seed + 888);
+
+  // Derive Surface Height & Climate
+  for (int x = 0; x < SIZE; x++)
   {
-    int global_x = chunk_x * chunk_t::SIZE + x;
+    int global_x = global_x_start + x;
+    float cont_val = continental_map_buf[x];
 
-    // Calculate surface height and climate for this column (used for biome selection)
-    float surface_height = get_height_at(global_x); // The "ideal" surface height from heightmap
-    auto climate = get_climate_at(global_x);
+    // Find landforms
+    size_t i1 = 0, i2 = 0;
+    float lf_t = 0.0f;
 
-    // Get overhang strength for this column
-    // We need to interpolate it just like height
-    // (Copy-paste logic from get_height_at essentially, but retrieving strength)
-    // TODO: Refactor landform blending to return a struct of properties.
-    // For now, let's just re-calculate or approximate.
-    // Optimization: Just get it from the "dominant" landform or blend again.
-    // Let's do a quick re-blend for strength:
-    float overhang_strength = 0.0f;
+    if (cont_val <= landforms[0].threshold)
     {
-      float cont_val = 0.0f;
-      if (continental_noise)
-        cont_val = continental_noise->GenSingle2D(global_x, 0, global_seed);
-      // Find blend
-      size_t i1 = 0, i2 = 0;
-      float t = 0.0f;
-      // ... (Same binary search logic) ...
-      // For brevity, assume linear scan matches get_height_at logic
-      if (cont_val <= landforms[0].threshold)
+      i1 = i2 = 0;
+      lf_t = 0;
+    }
+    else if (cont_val >= landforms.back().threshold)
+    {
+      i1 = i2 = landforms.size() - 1;
+      lf_t = 0;
+    }
+    else
+    {
+      for (size_t i = 0; i < landforms.size() - 1; i++)
       {
-        i1 = i2 = 0;
-        t = 0;
-      }
-      else if (cont_val >= landforms.back().threshold)
-      {
-        i1 = i2 = landforms.size() - 1;
-        t = 0;
-      }
-      else
-      {
-        for (size_t i = 0; i < landforms.size() - 1; i++)
+        if (cont_val >= landforms[i].threshold && cont_val < landforms[i + 1].threshold)
         {
-          if (cont_val >= landforms[i].threshold && cont_val < landforms[i + 1].threshold)
-          {
-            i1 = i;
-            i2 = i + 1;
-            float range = landforms[i2].threshold - landforms[i1].threshold;
-            t = (range > 0.0001f) ? (cont_val - landforms[i1].threshold) / range : 0;
-            break;
-          }
+          i1 = i;
+          i2 = i + 1;
+          float range = landforms[i2].threshold - landforms[i1].threshold;
+          lf_t = (range > 0.0001f) ? (cont_val - landforms[i1].threshold) / range : 0;
+          break;
         }
       }
-      overhang_strength = landforms[i1].overhang_strength * (1.0f - t) + landforms[i2].overhang_strength * t;
     }
 
-    // Pick topsoil layer based on climate
+    // Height (Still scalar unfortunately for landforms, but fast enough)
+    auto get_lf_h_local = [&](size_t idx)
+    {
+      const auto &lf = landforms[idx];
+      float nv = 0.0f;
+      if (idx < landform_noises.size() && landform_noises[idx])
+        nv = landform_noises[idx]->GenSingle2D(global_x, 0, global_seed + 1337 + idx);
+      return lf.base_height + (nv * lf.height_variance);
+    };
+
+    float h1 = get_lf_h_local(i1);
+    float h2 = (i1 == i2) ? h1 : get_lf_h_local(i2);
+    cached_surface_height[x] = h1 + (h2 - h1) * lf_t;
+
+    // Overhang Strength
+    cached_overhang_strength[x] = landforms[i1].overhang_strength * (1.0f - lf_t) + landforms[i2].overhang_strength * lf_t;
+
+    // Climate
+    float climate_t = temp_map_buf[x] * 30.0f + 10.0f;
+    float climate_r = (rain_map_buf[x] + 1.0f) * 0.5f * 255.0f;
+    cached_climate[x] = {climate_t, climate_r};
+
+    // Active Layer (Pre-calculate!)
     const BlockLayer *active_layer = nullptr;
     for (const auto &layer : block_layers)
     {
-      if (climate.first >= layer.min_temp && climate.first <= layer.max_temp && climate.second >= layer.min_rain && climate.second <= layer.max_rain)
+      if (climate_t >= layer.min_temp && climate_t <= layer.max_temp && climate_r >= layer.min_rain && climate_r <= layer.max_rain)
       {
         active_layer = &layer;
         break;
@@ -455,136 +560,223 @@ void world_generator_t::generate_chunk(chunk_t *chunk, int chunk_x, int chunk_y)
     }
     if (!active_layer && !block_layers.empty())
       active_layer = &block_layers[0];
+    cached_active_layer[x] = active_layer;
+  }
 
-    for (int y = 0; y < chunk_t::SIZE; y++)
+  // 3. Generate Chunk Maps (Batched) -----------------------------------------
+
+  if (overhang_noise)
+    overhang_noise->GenUniformGrid2D(overhang_map_buf.data(), global_x_start, global_y_start, SIZE, SIZE, 1.0f, global_seed + 12345);
+
+  if (cave_config.cheese_enabled && cheese_noise)
+    cheese_noise->GenUniformGrid2D(cheese_map_buf.data(), global_x_start, global_y_start, SIZE, SIZE, 1.0f, cave_config.cheese_noise.seed);
+
+  if (cave_config.worm_enabled && worm_noise)
+    worm_noise->GenUniformGrid2D(worm_map_buf.data(), global_x_start, global_y_start, SIZE, SIZE, 1.0f, cave_config.worm_noise.seed);
+
+  if (!provinces.empty() && province_noise)
+    province_noise->GenUniformGrid2D(province_map_buf.data(), global_x_start, global_y_start, SIZE, SIZE, 1.0f, global_seed + 9999);
+
+  if (strata_noise)
+    strata_noise->GenUniformGrid2D(strata_map_buf.data(), global_x_start, global_y_start, SIZE, SIZE, 1.0f, global_seed + 111);
+
+  // 4. Process Chunk using Cached Data (Y-Outer Loop Optimization) -----------
+  // Iterate Y first to access noise buffers linearly (row by row)
+  for (int y = 0; y < SIZE; y++)
+  {
+    int global_y = global_y_start + y;
+
+    for (int x = 0; x < SIZE; x++)
     {
-      int global_y = chunk_y * chunk_t::SIZE + y;
+      int global_x = global_x_start + x;
+      int buf_idx = x + y * SIZE; // Linear access now!
+
+      // Use Cache
+      float surface_height = cached_surface_height[x];
+      float overhang_strength = cached_overhang_strength[x];
+      const BlockLayer *active_layer = cached_active_layer[x]; // Cached pointer
+
+      // Map Lookups (Linear access)
+      float noise_overhang_val = overhang_map_buf[buf_idx];
+      float noise_cheese_val = cheese_map_buf[buf_idx];
+      float noise_worm_val = worm_map_buf[buf_idx];
+      float noise_province_val = province_map_buf[buf_idx];
+      float noise_strata_val = strata_map_buf[buf_idx];
+
       const tile_definition_t *tile = air_tile;
 
-      // 1. Calculate Densities
-      float base_density = get_base_density(global_x, global_y, surface_height, overhang_strength);
+      // 1. Calculate Base Density
+      float base_density = surface_height - (float)global_y;
+      if (overhang_strength > 0.001f && overhang_noise)
+      {
+        base_density += (noise_overhang_val * overhang_strength * 40.0f);
+      }
+
+      // 2. Cave Modification
       float final_density = base_density;
+      float cave_mod = 0.0f;
       if (base_density > 0.0f)
       {
-        float cave_mod = get_cave_density_modifier(global_x, global_y, surface_height);
+        float depth = surface_height - (float)global_y;
+        if (depth >= cave_config.global_min_depth)
+        {
+          // Cheese
+          if (cave_config.cheese_enabled)
+          {
+            float fade = 1.0f;
+            if (depth < cave_config.cheese_fade_depth) // Could optimize this branch out?
+            {
+              fade = (depth - (float)cave_config.global_min_depth) / (cave_config.cheese_fade_depth - (float)cave_config.global_min_depth);
+              fade = std::max(0.0f, std::min(1.0f, fade));
+            }
+            if (noise_cheese_val > cave_config.cheese_threshold)
+              cave_mod -= (noise_cheese_val - cave_config.cheese_threshold) * 1000.0f * fade;
+          }
+
+          // Worm
+          if (cave_config.worm_enabled)
+          {
+            float fade = 1.0f;
+            if (depth < cave_config.worm_fade_depth)
+            {
+              fade = (depth - (float)cave_config.global_min_depth) / (cave_config.worm_fade_depth - (float)cave_config.global_min_depth);
+              fade = std::max(0.0f, std::min(1.0f, fade));
+            }
+            float thickness = cave_config.worm_thickness;
+            if (noise_worm_val > (1.0f - thickness))
+              cave_mod -= 1000.0f * fade;
+          }
+        }
         final_density += cave_mod;
       }
-      // 2. Tile Decision Logic
+
+      // 3. Tile Decision
       if (final_density > 0.0f)
       {
-        // We are solid.
+        // Solid
+        // Check "Above" for exposure.
         bool is_exposed = false;
         bool is_natural_exposure = false;
 
-        // Check above
-        float base_density_above = get_base_density(global_x, global_y + 1, surface_height, overhang_strength);
-        float cave_mod_above = 0.0f;
-        if (base_density_above > 0.0f)
-          cave_mod_above = get_cave_density_modifier(global_x, global_y + 1, surface_height);
-        float final_density_above = base_density_above + cave_mod_above;
+        float base_density_above;
+        float final_density_above;
+
+        if (y + 1 < SIZE)
+        {
+          // Use buffer (Next Row, same X) -> buf_idx + SIZE
+          float n_ov_up = overhang_map_buf[buf_idx + SIZE];
+
+          base_density_above = surface_height - (float)(global_y + 1);
+          if (overhang_strength > 0.001f && overhang_noise)
+            base_density_above += (n_ov_up * overhang_strength * 40.0f);
+
+          float c_mod_up = 0.0f;
+          if (base_density_above > 0.0f)
+          {
+            float n_ch_up = cheese_map_buf[buf_idx + SIZE];
+            float n_wm_up = worm_map_buf[buf_idx + SIZE];
+            float d_up = surface_height - (float)(global_y + 1);
+            if (d_up >= cave_config.global_min_depth)
+            {
+              if (cave_config.cheese_enabled && n_ch_up > cave_config.cheese_threshold)
+                c_mod_up -= 100.0f;
+              if (cave_config.worm_enabled && n_wm_up > (1.0f - cave_config.worm_thickness))
+                c_mod_up -= 100.0f;
+            }
+          }
+          final_density_above = base_density_above + c_mod_up;
+        }
+        else
+        {
+          // Fallback for chunk boundary
+          final_density_above = get_density_final(global_x, global_y + 1, surface_height, overhang_strength);
+          base_density_above = get_base_density(global_x, global_y + 1, surface_height, overhang_strength);
+        }
 
         if (final_density_above <= 0.0f)
         {
           is_exposed = true;
-          // Natural exposure if it wasn't carved out.
-          // i.e. base density alone was already air.
           if (base_density_above <= 0.0f)
             is_natural_exposure = true;
         }
 
-        // Block Layer Selection
-        // Determine "Depth" into the terrain.
-        // Approximation: surface_height - y.
-        // But for overhangs, we want local depth. Local depth is hard.
-        // We will use the macro surface height for the "Soil/Stone" transition.
-        // If we are significantly above surface height (overhang), we assume Dirt/Grass composition.
-
         int depth = (int)(surface_height - (float)global_y);
         if (depth < 0)
-          depth = 0; // Treat hills/overhangs as "Surface level" crust
+          depth = 0;
 
-        // Find which entry applies
-        // Default to Stone (or last entry)
-        tile = stone_tile;
+        // Resolve Deep Stone
+        const tile_definition_t *deep_stone = stone_tile;
+        if (!provinces.empty())
+        {
+          float pv = noise_province_val;
+          // Distortion
+          if (strata_noise)
+            pv += noise_strata_val * 0.15f;
+
+          float norm = (pv + 1.0f) * 0.5f;
+          norm = std::max(0.0f, std::min(0.99f, norm));
+          int p_idx = (int)(norm * provinces.size());
+
+          // Use CACHED tile
+          if (provinces[p_idx].resolved_tile)
+            deep_stone = provinces[p_idx].resolved_tile;
+        }
+
+        tile = deep_stone;
 
         if (active_layer && !active_layer->entries.empty())
         {
           int current_depth = 0;
-          bool found = false;
-
-          // Check if we are in the "Soil" layers
+          bool found_layer = false;
           for (size_t i = 0; i < active_layer->entries.size(); i++)
           {
             const auto &entry = active_layer->entries[i];
-            // Use max_thickness for now, or randomize between min/max using X/Y hash?
-            // Let's use max for consistency, or average.
-            // Smooth randomness using noise
-            // Use strata_noise. If not initialized, fallback to hash.
             int thickness = entry.max_thickness;
             if (entry.min_thickness != entry.max_thickness)
             {
-              float t = 0.5f;
-              if (strata_noise)
-              {
-                // Use different Seed per layer depth to decorrelate layers?
-                // Or just X + depth offset.
-                float n = strata_noise->GenSingle2D(global_x * 1.0f, current_depth * 100.0f, global_seed + 555);
-                t = (n + 1.0f) * 0.5f; // -1..1 -> 0..1
-              }
-              else
-              {
-                // Fallback hash
-                int h = (global_x * 73856093) ^ (global_seed);
-                t = (float)(std::abs(h) % 100) / 100.0f;
-              }
-              thickness = entry.min_thickness + (int)(t * (entry.max_thickness - entry.min_thickness)); // truncate
+              // Variation logic (skip for perf or use hash)
+              int h = (global_x * 73856093) ^ (global_seed + current_depth * 99); // Simple hash
+              float t = (float)(std::abs(h) % 100) / 100.0f;
+              thickness = entry.min_thickness + (int)(t * (entry.max_thickness - entry.min_thickness));
             }
 
             if (depth < current_depth + thickness)
             {
-              // Matched this layer
-              if (i == 0) // Top Layer (Grass)
+              // Matched
+              if (i == 0 && is_exposed && is_natural_exposure)
               {
-                if (is_exposed && is_natural_exposure)
-                {
-                  tile = deepbound::tile_registry_t::get().get_tile(resource_id_t("deepbound", entry.tile_code));
-                }
-                else
-                {
-                  // We are covered, OR we are a cave floor.
-                  // Fallthrough to next layer (Dirt) if possible.
-                  if (i + 1 < active_layer->entries.size())
-                  {
-                    tile = deepbound::tile_registry_t::get().get_tile(resource_id_t("deepbound", active_layer->entries[i + 1].tile_code));
-                  }
-                  else
-                  {
-                    // No next layer, just use this one? Or Stone?
-                    // Usually dirt.
-                    tile = deepbound::tile_registry_t::get().get_tile(resource_id_t("deepbound", entry.tile_code));
-                    // If "Grass" is used underground, it usually turns to dirt in game logic, but here we just place tile.
-                    // We probably shouldn't place Grass underground.
-                    // Hardcoded fallback to dirt if we don't have a lookup?
-                    // For now, assume Entry 1 exists if Entry 0 exists.
-                  }
-                }
+                if (entry.resolved_tile)
+                  tile = entry.resolved_tile;
               }
               else
               {
-                // Regular layer (Dirt, Clay, etc.)
-                tile = deepbound::tile_registry_t::get().get_tile(resource_id_t("deepbound", entry.tile_code));
+                // Covered or cave floor
+                if (i == 0) // If it was grass but covered
+                {
+                  if (i + 1 < active_layer->entries.size())
+                  {
+                    if (active_layer->entries[i + 1].resolved_tile)
+                      tile = active_layer->entries[i + 1].resolved_tile;
+                  }
+                  else
+                  {
+                    if (entry.resolved_tile)
+                      tile = entry.resolved_tile; // Fallback
+                  }
+                }
+                else
+                {
+                  if (entry.resolved_tile)
+                    tile = entry.resolved_tile;
+                }
               }
-              found = true;
+              found_layer = true;
               break;
             }
             current_depth += thickness;
           }
-
-          if (!found)
-          {
-            // Deeper than all defined layers -> Stone
-            tile = stone_tile;
-          }
+          if (!found_layer)
+            tile = deep_stone;
         }
       }
       else
@@ -600,7 +792,8 @@ void world_generator_t::generate_chunk(chunk_t *chunk, int chunk_x, int chunk_y)
       }
 
       chunk->set_tile(x, y, tile);
-      chunk->set_climate(x, y, climate.first, climate.second);
+      // chunk->set_climate(x, y, climate_t, climate_r); // Climate is not Y-dependent, so we can access cached
+      chunk->set_climate(x, y, cached_climate[x].first, cached_climate[x].second);
     }
   }
 }

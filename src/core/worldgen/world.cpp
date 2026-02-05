@@ -2,6 +2,7 @@
 #include "core/worldgen/world_generator.hpp"
 #include "core/content/tile.hpp"
 #include <iostream>
+#include <future>
 
 namespace deepbound
 {
@@ -14,6 +15,7 @@ world_t::world_t()
   generator->load_config("assets/worldgen/landforms.json");
   generator->load_block_layers("assets/worldgen/blocklayers.json");
   generator->load_caves("assets/worldgen/caves.json");
+  generator->load_provinces("assets/worldgen/provinces.json");
 
   // Pre-generate some chunks around user spawn?
   // Let's just generate the origin (0,0) chunk for now to verify.
@@ -27,6 +29,28 @@ world_t::~world_t()
 void world_t::update(double delta_time)
 {
   // Update chunks, simulate water, entities...
+  update_chunks();
+}
+
+void world_t::update_chunks()
+{
+  // Poll pending chunks
+  for (auto it = pending_chunks.begin(); it != pending_chunks.end();)
+  {
+    if (it->second.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+    {
+      // Ready!
+      auto new_chunk = it->second.get();
+      long long key = it->first;
+      chunks[key] = std::move(new_chunk);
+
+      it = pending_chunks.erase(it);
+    }
+    else
+    {
+      ++it;
+    }
+  }
 }
 
 const tile_definition_t *world_t::get_tile_at(float world_x, float world_y) const
@@ -83,20 +107,44 @@ std::vector<chunk_t *> world_t::get_visible_chunks(const glm::vec2 &camera_pos, 
   int cy_start = (int)floor(camera_pos.y) / chunk_t::SIZE - view_distance;
   int cy_end = (int)floor(camera_pos.y) / chunk_t::SIZE + view_distance;
 
-  // Ensure height bounds too? Max 1024 -> 32 chunks high
-  // Chunks start at Y=0 usually?
   if (cy_start < 0)
     cy_start = 0;
   if (cy_end > 32)
     cy_end = 32;
 
+  // 1. Identify Existing vs Missing
   for (int cx = cx_start; cx <= cx_end; cx++)
   {
     for (int cy = cy_start; cy <= cy_end; cy++)
     {
-      visible.push_back(get_chunk(cx, cy));
+      long long key = get_chunk_key(cx, cy);
+
+      // a) Check Existing
+      auto it = chunks.find(key);
+      if (it != chunks.end())
+      {
+        visible.push_back(it->second.get());
+      }
+      else
+      {
+        // b) Check Pending (Avoid duplicate requests)
+        if (pending_chunks.find(key) == pending_chunks.end() && generator)
+        {
+          // c) Launch Async (If not duplicate)
+          pending_chunks[key] = std::async(std::launch::async,
+                                           [this, cx, cy]()
+                                           {
+                                             auto new_chunk = std::make_unique<chunk_t>();
+                                             new_chunk->x = cx * chunk_t::SIZE;
+                                             new_chunk->y = cy * chunk_t::SIZE;
+                                             this->generator->generate_chunk(new_chunk.get(), cx, cy);
+                                             return new_chunk;
+                                           });
+        }
+      }
     }
   }
+
   return visible;
 }
 

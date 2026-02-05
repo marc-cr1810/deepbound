@@ -1,0 +1,28 @@
+{
+  "provinces": [
+    {
+      "name": "Igneous",
+      "deep_stone": "rock-granite"
+    },
+    {
+      "name": "Volcanic",
+      "deep_stone": "rock-basalt"
+    },
+    {
+      "name": "Sedimentary",
+      "deep_stone": "rock-sandstone"
+    },
+    {
+      "name": "Chalky",
+      "deep_stone": "rock-chalk"
+    },
+    {
+      "name": "Metamorphic",
+      "deep_stone": "rock-slate"
+    }
+  ],
+  "noise": {
+    "frequency": 0.0005,
+    "seed_offset": 9999
+  }
+}

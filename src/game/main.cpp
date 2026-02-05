@@ -88,6 +88,9 @@ int main(int argc, char *argv[])
     if (window.is_key_pressed(GLFW_KEY_D))
       camera.move({speed, 0.0f});
 
+    // Update World (Process Async Chunks)
+    world.update(delta_time);
+
     // Render
     glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);

@@ -3,6 +3,7 @@
 #include <vector>
 #include <unordered_map>
 #include <memory>
+#include <future>
 #include <glm/glm.hpp>
 
 // Forward declarations
@@ -134,6 +135,10 @@ private:
 
   // The Generator
   std::unique_ptr<class world_generator_t> generator;
+
+  // Async Loading
+  std::unordered_map<long long, std::future<std::unique_ptr<chunk_t>>> pending_chunks;
+  void update_chunks();
 };
 
 } // namespace deepbound

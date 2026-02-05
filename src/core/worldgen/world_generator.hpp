@@ -39,6 +39,7 @@ struct BlockLayerEntry
   std::string tile_code;
   int min_thickness;
   int max_thickness;
+  const tile_definition_t *resolved_tile = nullptr;
 };
 
 struct BlockLayer
@@ -68,6 +69,14 @@ struct CaveConfig
   int global_min_depth = 20;
 };
 
+struct GeologicalProvince
+{
+  std::string name;
+  std::string deep_stone_code;
+  const tile_definition_t *resolved_tile = nullptr;
+  // Could add specific ore probabilities here later
+};
+
 class world_generator_t
 {
 public:
@@ -77,6 +86,7 @@ public:
   void load_config(const std::string &path);
   void load_block_layers(const std::string &path);
   void load_caves(const std::string &path);
+  void load_provinces(const std::string &path);
 
   // Main generate function
   void generate_chunk(chunk_t *chunk, int chunk_x, int chunk_y);
@@ -99,11 +109,13 @@ private:
 
   FastNoise::SmartNode<> cheese_noise;
   FastNoise::SmartNode<> worm_noise;
-  FastNoise::SmartNode<> strata_noise; // generic noise for varying layer thickness
+  FastNoise::SmartNode<> strata_noise;   // generic noise for varying layer thickness
+  FastNoise::SmartNode<> province_noise; // Noise for province selection
 
   std::vector<FastNoise::SmartNode<>> landform_noises;
   std::vector<Landform> landforms;
   std::vector<BlockLayer> block_layers;
+  std::vector<GeologicalProvince> provinces;
   CaveConfig cave_config;
 
   // Helper to get height at x
